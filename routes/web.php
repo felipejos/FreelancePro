@@ -34,6 +34,7 @@ $router->get('dashboard', 'DashboardController@index', ['CompanyMiddleware']);
 $router->get('playbooks', 'PlaybookController@index', ['CompanyMiddleware']);
 $router->get('playbooks/create', 'PlaybookController@create', ['CompanyMiddleware']);
 $router->post('playbooks/generate', 'PlaybookController@generate', ['CompanyMiddleware']);
+$router->post('playbooks/transcribe', 'PlaybookController@transcribe', ['CompanyMiddleware']);
 $router->get('playbooks/{id}', 'PlaybookController@show', ['CompanyMiddleware']);
 $router->post('playbooks/{id}/publish', 'PlaybookController@publish', ['CompanyMiddleware']);
 $router->get('playbooks/{id}/assign', 'PlaybookController@assignPage', ['CompanyMiddleware']);
@@ -89,6 +90,7 @@ $router->get('payment/success', 'PaymentController@success', ['CompanyMiddleware
 $router->get('payment/failure', 'PaymentController@failure', ['CompanyMiddleware']);
 $router->get('payment/history', 'PaymentController@history', ['CompanyMiddleware']);
 $router->get('subscription', 'PaymentController@subscription', ['CompanyMiddleware']);
+$router->get('subscription/cancelled', 'PaymentController@cancelled', ['CompanyMiddleware']);
 $router->post('subscription/cancel', 'PaymentController@cancelSubscription', ['CompanyMiddleware']);
 
 // ==========================================

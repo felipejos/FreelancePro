@@ -95,15 +95,21 @@ document.getElementById('courseForm').addEventListener('submit', async function(
         const formData = new FormData(form);
         const response = await fetch('<?= $this->url('courses/generate') ?>', {
             method: 'POST',
+            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
             body: formData
         });
-        
-        const data = await response.json();
-        
-        if (data.success) {
+        const ct = response.headers.get('content-type') || '';
+        let data = null, text = '';
+        if (ct.indexOf('application/json') !== -1) {
+            data = await response.json();
+        } else {
+            text = await response.text();
+        }
+        if (response.ok && data && data.success) {
             window.location.href = '<?= $this->url('courses/') ?>' + data.course_id;
         } else {
-            alert(data.error || 'Erro ao gerar curso');
+            const errMsg = (data && (data.error || data.message)) || text || 'Erro ao gerar curso';
+            alert(errMsg);
             form.classList.remove('hidden');
             loadingState.classList.add('hidden');
         }

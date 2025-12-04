@@ -128,7 +128,13 @@ class AssasService
 
     public function cancelSubscription(string $subscriptionId): array
     {
-        return $this->request('DELETE', "/subscriptions/{$subscriptionId}");
+        return $this->request('POST', "/subscriptions/{$subscriptionId}/cancel", []);
+    }
+
+    public function listSubscriptionsByCustomer(string $customerId, string $status = 'ACTIVE'): array
+    {
+        $statusParam = $status !== '' ? "&status={$status}" : '';
+        return $this->request('GET', "/subscriptions?customer={$customerId}{$statusParam}");
     }
 
     public function createPayment(array $data): array

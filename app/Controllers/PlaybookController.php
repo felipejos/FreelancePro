@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Models\Payment;
 use App\Models\AdminConfig;
 use App\Services\OpenAIService;
+use App\Services\DocumentParser;
 
 /**
  * PlaybookController - Gerenciamento de Playbooks/Treinamentos
@@ -68,6 +69,44 @@ class PlaybookController extends Controller
         $title = trim($this->input('title'));
         $sourceType = $this->input('source_type', 'text');
         $content = trim($this->input('content'));
+        $sourceFile = '';
+
+        if ($sourceType === 'file' && isset($_FILES['file']) && ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK) {
+            $uploadDir = ROOT_PATH . '/public/uploads';
+            if (!is_dir($uploadDir)) { @mkdir($uploadDir, 0755, true); }
+            $orig = $_FILES['file']['name'] ?? '';
+            $tmp = $_FILES['file']['tmp_name'] ?? '';
+            $name = uniqid('play_', true) . '_' . preg_replace('/[^a-zA-Z0-9_\.\-]/', '_', $orig);
+            $dest = $uploadDir . '/' . $name;
+            if (move_uploaded_file($tmp, $dest)) {
+                $parsed = DocumentParser::parse($dest, $orig);
+                $content = trim($parsed);
+                $sourceFile = 'uploads/' . $name;
+            }
+            if (empty($content)) {
+                $this->json(['error' => 'Não foi possível ler o arquivo enviado. Tente enviar um TXT ou DOCX. Para PDF/DOC, é necessário ter pdftotext/antiword instalados no servidor.'], 400);
+            }
+        }
+
+        if ($sourceType === 'audio' && isset($_FILES['audio']) && ($_FILES['audio']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK) {
+            $uploadDir = ROOT_PATH . '/public/uploads';
+            if (!is_dir($uploadDir)) { @mkdir($uploadDir, 0755, true); }
+            $orig = $_FILES['audio']['name'] ?? 'audio.webm';
+            $tmp = $_FILES['audio']['tmp_name'] ?? '';
+            $name = uniqid('rec_', true) . '_' . preg_replace('/[^a-zA-Z0-9_\.\-]/', '_', $orig);
+            $dest = $uploadDir . '/' . $name;
+            if (move_uploaded_file($tmp, $dest)) {
+                $aiService = new OpenAIService();
+                $text = $aiService->transcribeAudio($dest, (int)$user['id']);
+                if (!empty($text)) {
+                    $content = trim($text);
+                    $sourceFile = 'uploads/' . $name;
+                }
+            }
+            if (empty($content)) {
+                $this->json(['error' => 'Falha ao transcrever o áudio. Tente novamente.'], 400);
+            }
+        }
 
         if (empty($title) || empty($content)) {
             $this->json(['error' => 'Preencha todos os campos'], 400);
@@ -109,6 +148,7 @@ class PlaybookController extends Controller
                 'title' => $title,
                 'content_html' => $contentHtml,
                 'source_type' => $sourceType,
+                'source_file' => $sourceFile,
                 'status' => 'draft',
             ]);
 
@@ -125,6 +165,33 @@ class PlaybookController extends Controller
 
         } catch (\Exception $e) {
             $this->json(['error' => 'Erro ao gerar playbook: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function transcribe(): void
+    {
+        if (!$this->validateCsrf()) {
+            $this->json(['error' => 'Token inválido'], 400);
+        }
+        $user = $this->currentUser();
+        if (!isset($_FILES['audio']) || ($_FILES['audio']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            $this->json(['error' => 'Áudio não enviado'], 400);
+        }
+        $uploadDir = ROOT_PATH . '/public/uploads';
+        if (!is_dir($uploadDir)) { @mkdir($uploadDir, 0755, true); }
+        $orig = $_FILES['audio']['name'] ?? 'audio.webm';
+        $tmp = $_FILES['audio']['tmp_name'] ?? '';
+        $name = uniqid('rec_', true) . '_' . preg_replace('/[^a-zA-Z0-9_\.\-]/', '_', $orig);
+        $dest = $uploadDir . '/' . $name;
+        if (!move_uploaded_file($tmp, $dest)) {
+            $this->json(['error' => 'Falha ao salvar áudio'], 500);
+        }
+        try {
+            $aiService = new OpenAIService();
+            $text = $aiService->transcribeAudio($dest, (int)$user['id']);
+            $this->json(['success' => true, 'text' => $text, 'file' => 'uploads/' . $name]);
+        } catch (\Exception $e) {
+            $this->json(['error' => $e->getMessage()], 500);
         }
     }
 
