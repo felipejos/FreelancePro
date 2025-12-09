@@ -16,6 +16,7 @@ class CourseEnrollment extends Model
         'employee_id',
         'enrolled_by',
         'status',
+        'is_locked',
         'progress_percentage',
         'started_at',
         'completed_at',

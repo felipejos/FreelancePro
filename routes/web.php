@@ -55,6 +55,7 @@ $router->post('courses/lessons/{id}/video', 'CourseController@updateLessonVideo'
 $router->post('courses/{id}/publish', 'CourseController@publish', ['CompanyMiddleware']);
 $router->post('courses/{id}/regenerate', 'CourseController@regenerate', ['CompanyMiddleware']);
 $router->post('courses/{id}/enroll', 'CourseController@enroll', ['CompanyMiddleware']);
+$router->post('courses/enrollments/{id}/unlock', 'CourseController@unlockEnrollment', ['CompanyMiddleware']);
 $router->delete('courses/{id}', 'CourseController@delete', ['CompanyMiddleware']);
 
 // Funcionários
@@ -106,6 +107,8 @@ $router->get('employee/courses', 'EmployeePanelController@courses', ['EmployeeMi
 $router->get('employee/courses/{id}', 'EmployeePanelController@viewCourse', ['EmployeeMiddleware']);
 $router->get('employee/lessons/{id}', 'EmployeePanelController@viewLesson', ['EmployeeMiddleware']);
 $router->post('employee/lessons/{id}/complete', 'EmployeePanelController@completeLesson', ['EmployeeMiddleware']);
+$router->get('employee/courses/{courseId}/modules/{moduleId}/quiz', 'EmployeePanelController@moduleQuiz', ['EmployeeMiddleware']);
+$router->post('employee/courses/{courseId}/modules/{moduleId}/quiz', 'EmployeePanelController@submitModuleQuiz', ['EmployeeMiddleware']);
 
 // ==========================================
 // ROTAS DO PROFISSIONAL (PROFESSIONAL)

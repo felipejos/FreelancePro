@@ -7,6 +7,10 @@ use App\Models\Course;
 use App\Models\CourseModule;
 use App\Models\CourseLesson;
 use App\Models\CourseEnrollment;
+use App\Models\CourseQuestion;
+use App\Models\CourseAnswer;
+use App\Models\CourseModuleResult;
+use App\Models\CompanySetting;
 use App\Models\User;
 use App\Services\OpenAIService;
 
@@ -94,7 +98,7 @@ class CourseController extends Controller
             $structurePrompt .= "- O HTML deve ser autocontido, sem usar <html>, <head> ou <body>.\n";
             $structurePrompt .= "- Não inclua explicações fora do JSON.\n";
             if ($videoSource === 'ai') {
-                $structurePrompt .= "Além disso, para cada aula indique também um campo video_url com uma URL COMPLETA de um vídeo público relevante no YouTube em português do Brasil (não escolha vídeos em outros idiomas), preferencialmente com domínio https://www.youtube.com.br/.\n";
+                $structurePrompt .= "Além disso, para cada aula indique também um campo video_url com uma URL COMPLETA de um vídeo público RELEVANTE e ALINHADO ao tema da aula no YouTube, em português do Brasil. Não escolha vídeos em outros idiomas (inglês, espanhol, etc.). Se não houver uma boa opção em português do Brasil, defina video_url como null. Prefira links cujo domínio seja https://www.youtube.com.br/.\n";
                 $structurePrompt .= "Retorne APENAS um JSON VÁLIDO no seguinte formato, sem markdown, sem comentários, sem texto antes ou depois:\n";
                 $structurePrompt .= '{"modules":[{"title":"título do módulo","description":"descrição do módulo","lessons":[{"title":"título da aula","content_html":"conteúdo HTML completo da aula","video_url":"https://www.youtube.com/..."}]}]}';
             } else {
@@ -132,13 +136,36 @@ class CourseController extends Controller
 
                 $lessonOrder = 1;
                 foreach ($moduleData['lessons'] ?? [] as $lessonData) {
+                    $videoUrl = null;
+                    if ($videoSource === 'ai') {
+                        $candidate = $lessonData['video_url'] ?? null;
+                        $plain = strip_tags($lessonData['content_html'] ?? '');
+                        if ($candidate && $this->isYoutubeUrl($candidate) && $this->isYoutubeVideoAvailable($candidate) && $this->isYoutubeVideoPortuguese($candidate)) {
+                            $videoUrl = $candidate;
+                        } else {
+                            $videoUrl = $this->suggestYoutubePtBrVideo($title, $lessonData['title'] ?? '', $plain, $user['id']);
+                        }
+                    }
+
                     $this->lessonModel->create([
                         'module_id' => $moduleId,
                         'title' => $lessonData['title'],
                         'content_html' => $lessonData['content_html'] ?? '',
-                        'video_url' => $videoSource === 'ai' ? ($lessonData['video_url'] ?? null) : null,
+                        'video_url' => $videoUrl,
                         'order_number' => $lessonOrder++,
                     ]);
+                }
+
+                // Gerar questionário do módulo com IA
+                $moduleHtml = '';
+                foreach ($moduleData['lessons'] ?? [] as $lessonData) {
+                    $moduleHtml .= (string)($lessonData['content_html'] ?? '');
+                    $moduleHtml .= "\n\n";
+                }
+                $questions = $this->generateModuleQuestions($moduleHtml, $user['id']);
+                if (!empty($questions)) {
+                    $courseQuestionModel = new CourseQuestion();
+                    $courseQuestionModel->createBatch($moduleId, $questions);
                 }
             }
 
@@ -193,7 +220,7 @@ class CourseController extends Controller
             $structurePrompt .= "- Para cada aula, escreva um conteúdo HTML COMPLETO em português, com pelo menos 6 parágrafos, usando tags <h2>, <h3>, <p>, <ul>, <li>, etc.\n";
             $structurePrompt .= "- O HTML deve ser autocontido, sem usar <html>, <head> ou <body>.\n";
             $structurePrompt .= "- Não inclua explicações fora do JSON.\n";
-            $structurePrompt .= "Além disso, para cada aula indique também um campo video_url com uma URL COMPLETA de um vídeo público relevante no YouTube em português do Brasil (não escolha vídeos em outros idiomas), preferencialmente com domínio https://www.youtube.com.br/.\n";
+            $structurePrompt .= "Além disso, para cada aula indique também um campo video_url com uma URL COMPLETA de um vídeo público RELEVANTE e ALINHADO ao tema da aula no YouTube, em português do Brasil. Não escolha vídeos em outros idiomas (inglês, espanhol, etc.). Se não houver uma boa opção em português do Brasil, defina video_url como null. Prefira links cujo domínio seja https://www.youtube.com.br/.\n";
             $structurePrompt .= "Retorne APENAS um JSON VÁLIDO no seguinte formato, sem markdown, sem comentários, sem texto antes ou depois:\n";
             $structurePrompt .= '{"modules":[{"title":"título do módulo","description":"descrição do módulo","lessons":[{"title":"título da aula","content_html":"conteúdo HTML completo da aula","video_url":"https://www.youtube.com/..."}]}]}';
 
@@ -222,13 +249,34 @@ class CourseController extends Controller
 
                 $lessonOrder = 1;
                 foreach ($moduleData['lessons'] ?? [] as $lessonData) {
+                    $candidate = $lessonData['video_url'] ?? null;
+                    $plain = strip_tags($lessonData['content_html'] ?? '');
+                    $videoUrl = null;
+                    if ($candidate && $this->isYoutubeUrl($candidate) && $this->isYoutubeVideoAvailable($candidate) && $this->isYoutubeVideoPortuguese($candidate)) {
+                        $videoUrl = $candidate;
+                    } else {
+                        $videoUrl = $this->suggestYoutubePtBrVideo($title, $lessonData['title'] ?? '', $plain, $user['id']);
+                    }
+
                     $this->lessonModel->create([
                         'module_id' => $moduleId,
                         'title' => $lessonData['title'],
                         'content_html' => $lessonData['content_html'] ?? '',
-                        'video_url' => $lessonData['video_url'] ?? null,
+                        'video_url' => $videoUrl,
                         'order_number' => $lessonOrder++,
                     ]);
+                }
+
+                // Gerar questionário do módulo com IA
+                $moduleHtml = '';
+                foreach ($moduleData['lessons'] ?? [] as $lessonData) {
+                    $moduleHtml .= (string)($lessonData['content_html'] ?? '');
+                    $moduleHtml .= "\n\n";
+                }
+                $questions = $this->generateModuleQuestions($moduleHtml, $user['id']);
+                if (!empty($questions)) {
+                    $courseQuestionModel = new CourseQuestion();
+                    $courseQuestionModel->createBatch($moduleId, $questions);
                 }
             }
 
@@ -660,6 +708,78 @@ class CourseController extends Controller
         }
 
         return false;
+    }
+
+    protected function generateModuleQuestions(string $moduleHtml, int $userId): array
+    {
+        $plain = trim(strip_tags($moduleHtml));
+        if ($plain === '') return [];
+        try {
+            $aiService = new OpenAIService();
+            $prompt = "Com base no conteúdo abaixo, crie 8 a 10 perguntas de múltipla escolha (4 alternativas: A, B, C, D) EM PORTUGUÊS DO BRASIL para avaliar o aprendizado do módulo. Inclua gabarito e breve explicação.\n\n";
+            $prompt .= "Conteúdo:\n" . mb_substr($plain, 0, 6000) . "\n\n";
+            $prompt .= "Retorne SOMENTE um JSON válido neste formato (sem markdown):\n";
+            $prompt .= '[{"question_text":"pergunta","option_a":"opção A","option_b":"opção B","option_c":"opção C","option_d":"opção D","correct_option":"A","explanation":"explicação da resposta correta"}]';
+            $json = $aiService->generateContent($prompt, $userId, 'course_module_questions');
+            preg_match('/\[[\s\S]*\]/', $json, $m);
+            $arr = json_decode($m[0] ?? '[]', true);
+            return is_array($arr) ? $arr : [];
+        } catch (\Exception $e) {
+            return [];
+        }
+    }
+
+    public function unlockEnrollment(int $enrollmentId): void
+    {
+        if (!$this->validateCsrf()) {
+            $this->json(['error' => 'Token inválido'], 400);
+        }
+        $user = $this->currentUser();
+        $enrollment = (new CourseEnrollment())->find($enrollmentId);
+        if (!$enrollment) {
+            $this->json(['error' => 'Matrícula não encontrada'], 404);
+        }
+        // Verificar se matrícula pertence a um curso da empresa logada
+        $sql = "SELECT c.* FROM courses c JOIN course_enrollments e ON e.course_id = c.id WHERE e.id = :id LIMIT 1";
+        $course = $this->courseModel->query($sql, ['id' => $enrollmentId])[0] ?? null;
+        if (!$course || $course['company_id'] != $user['id']) {
+            $this->json(['error' => 'Sem permissão'], 403);
+        }
+        // Desbloquear matrícula e resultados de módulos
+        (new CourseEnrollment())->update($enrollmentId, ['is_locked' => 0]);
+        (new CourseModuleResult())->execute('UPDATE course_module_results SET locked = 0 WHERE enrollment_id = :e', ['e' => $enrollmentId]);
+        $this->json(['success' => true, 'message' => 'Matrícula desbloqueada.']);
+    }
+
+    protected function suggestYoutubePtBrVideo(string $courseTitle, string $lessonTitle, string $plainContent, int $userId): ?string
+    {
+        try {
+            $aiService = new OpenAIService();
+            $maxAttempts = 5;
+            for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+                $prompt = "Você é um especialista em treinamento corporativo. Indique APENAS uma URL COMPLETA de um vídeo público no YouTube em português do Brasil que seja MUITO RELEVANTE para a aula abaixo. O vídeo deve ser claramente sobre o mesmo tema.\n\n";
+                $prompt .= "Título do curso: {$courseTitle}\n";
+                $prompt .= "Título da aula: {$lessonTitle}\n\n";
+                $prompt .= "Resumo do conteúdo da aula:\n" . mb_substr($plainContent, 0, 600);
+                $prompt .= "\n\nRegras importantes:\n";
+                $prompt .= "- O vídeo deve ser educacional/explicativo, adequado para treinamento corporativo.\n";
+                $prompt .= "- O tema deve bater claramente com o tema da aula.\n";
+                $prompt .= "- O vídeo deve estar em português do Brasil. Não escolha vídeos em outros idiomas. Prefira links https://www.youtube.com.br/.\n";
+                $prompt .= "Responda APENAS com a URL do YouTube.\n";
+
+                $response = $aiService->generateContent($prompt, $userId, 'lesson_video_suggestion');
+                if (!preg_match('/https?:\/\/\S+/', $response, $matches)) {
+                    continue;
+                }
+                $url = $matches[0];
+                if ($this->isYoutubeUrl($url) && $this->isYoutubeVideoAvailable($url) && $this->isYoutubeVideoPortuguese($url)) {
+                    return $url;
+                }
+            }
+        } catch (\Exception $e) {
+            // silencioso
+        }
+        return null;
     }
 
     /**
