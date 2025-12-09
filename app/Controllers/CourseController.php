@@ -338,8 +338,9 @@ class CourseController extends Controller
     /**
      * Visualizar curso
      */
-    public function show(int $id): void
+    public function show($id): void
     {
+        $id = (int) $id;
         $user = $this->currentUser();
         $course = $this->courseModel->getComplete($id);
 
