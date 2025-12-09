@@ -57,7 +57,7 @@ Certifique-se de que o mod_rewrite está habilitado e o AllowOverride está conf
 ## Estrutura do Projeto
 
 ```
-site-freelancePro/
+
 ├── app/
 │   ├── Controllers/     # Controladores
 │   ├── Core/            # Classes base do MVC

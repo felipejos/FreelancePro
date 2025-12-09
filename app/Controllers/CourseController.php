@@ -90,13 +90,14 @@ class CourseController extends Controller
             $structurePrompt .= "Título do curso: {$title}\n";
             $structurePrompt .= "Descrição do curso: {$description}\n\n";
             if (!empty($baseContent)) {
-                $structurePrompt .= "Conteúdo base / referências que devem ser usadas:\n{$baseContent}\n\n";
+                $structurePrompt .= "Conteúdo base / referências que devem ser usadas:\n" . mb_substr($baseContent, 0, 1500) . "\n\n";
             }
             $structurePrompt .= "Regras importantes:\n";
             $structurePrompt .= "- O curso deve ter EXATAMENTE 4 módulos e CADA módulo deve ter EXATAMENTE 3 aulas.\n";
-            $structurePrompt .= "- Para cada aula, escreva um conteúdo HTML COMPLETO em português, com pelo menos 6 parágrafos, usando tags <h2>, <h3>, <p>, <ul>, <li>, etc.\n";
+            $structurePrompt .= "- Para cada aula, escreva um conteúdo HTML COMPLETO em português, com 3 a 4 parágrafos curtos, usando tags <h2>, <h3>, <p>, <ul>, <li>, etc.\n";
             $structurePrompt .= "- O HTML deve ser autocontido, sem usar <html>, <head> ou <body>.\n";
             $structurePrompt .= "- Não inclua explicações fora do JSON.\n";
+            $structurePrompt .= "- Seja conciso para evitar ultrapassar o limite de tokens.\n";
             if ($videoSource === 'ai') {
                 $structurePrompt .= "Além disso, para cada aula indique também um campo video_url com uma URL COMPLETA de um vídeo público RELEVANTE e ALINHADO ao tema da aula no YouTube, em português do Brasil. Não escolha vídeos em outros idiomas (inglês, espanhol, etc.). Se não houver uma boa opção em português do Brasil, defina video_url como null. Prefira links cujo domínio seja https://www.youtube.com.br/.\n";
                 $structurePrompt .= "Retorne APENAS um JSON VÁLIDO no seguinte formato, sem markdown, sem comentários, sem texto antes ou depois:\n";
@@ -108,9 +109,13 @@ class CourseController extends Controller
 
             $structureJson = $aiService->generateContent($structurePrompt, $user['id']);
 
-            // Extrair JSON
-            preg_match('/\{[\s\S]*\}/', $structureJson, $matches);
-            $structure = json_decode($matches[0] ?? '{}', true);
+            // Extrair JSON de forma robusta + fallback
+            $structure = $this->parseStructureJson($structureJson);
+            if (empty($structure['modules'])) {
+                $retryPrompt = $structurePrompt . "\nIMPORTANTE: Responda SOMENTE com JSON válido exatamente no formato exigido (sem markdown). Reduza os textos (3-4 parágrafos por aula).";
+                $structureJson = $aiService->generateContent($retryPrompt, $user['id'], 'course_structure_retry');
+                $structure = $this->parseStructureJson($structureJson);
+            }
 
             if (empty($structure['modules'])) {
                 throw new \Exception('Não foi possível gerar a estrutura do curso');
@@ -217,18 +222,23 @@ class CourseController extends Controller
             }
             $structurePrompt .= "Regras importantes:\n";
             $structurePrompt .= "- O curso deve ter EXATAMENTE 4 módulos e CADA módulo deve ter EXATAMENTE 3 aulas.\n";
-            $structurePrompt .= "- Para cada aula, escreva um conteúdo HTML COMPLETO em português, com pelo menos 6 parágrafos, usando tags <h2>, <h3>, <p>, <ul>, <li>, etc.\n";
+            $structurePrompt .= "- Para cada aula, escreva um conteúdo HTML COMPLETO em português, com 3 a 4 parágrafos curtos, usando tags <h2>, <h3>, <p>, <ul>, <li>, etc.\n";
             $structurePrompt .= "- O HTML deve ser autocontido, sem usar <html>, <head> ou <body>.\n";
             $structurePrompt .= "- Não inclua explicações fora do JSON.\n";
+            $structurePrompt .= "- Seja conciso para evitar ultrapassar o limite de tokens.\n";
             $structurePrompt .= "Além disso, para cada aula indique também um campo video_url com uma URL COMPLETA de um vídeo público RELEVANTE e ALINHADO ao tema da aula no YouTube, em português do Brasil. Não escolha vídeos em outros idiomas (inglês, espanhol, etc.). Se não houver uma boa opção em português do Brasil, defina video_url como null. Prefira links cujo domínio seja https://www.youtube.com.br/.\n";
             $structurePrompt .= "Retorne APENAS um JSON VÁLIDO no seguinte formato, sem markdown, sem comentários, sem texto antes ou depois:\n";
             $structurePrompt .= '{"modules":[{"title":"título do módulo","description":"descrição do módulo","lessons":[{"title":"título da aula","content_html":"conteúdo HTML completo da aula","video_url":"https://www.youtube.com/..."}]}]}';
 
             $structureJson = $aiService->generateContent($structurePrompt, $user['id'], 'regenerate_course');
 
-            // Extrair JSON
-            preg_match('/\{[\s\S]*\}/', $structureJson, $matches);
-            $structure = json_decode($matches[0] ?? '{}', true);
+            // Extrair JSON de forma robusta + fallback
+            $structure = $this->parseStructureJson($structureJson);
+            if (empty($structure['modules'])) {
+                $retryPrompt = $structurePrompt . "\nIMPORTANTE: Responda SOMENTE com JSON válido exatamente no formato exigido (sem markdown). Reduza os textos (3-4 parágrafos por aula).";
+                $structureJson = $aiService->generateContent($retryPrompt, $user['id'], 'regenerate_course_retry');
+                $structure = $this->parseStructureJson($structureJson);
+            }
 
             if (empty($structure['modules'])) {
                 throw new \Exception('Não foi possível gerar a nova estrutura do curso');
@@ -749,6 +759,45 @@ class CourseController extends Controller
         (new CourseEnrollment())->update($enrollmentId, ['is_locked' => 0]);
         (new CourseModuleResult())->execute('UPDATE course_module_results SET locked = 0 WHERE enrollment_id = :e', ['e' => $enrollmentId]);
         $this->json(['success' => true, 'message' => 'Matrícula desbloqueada.']);
+    }
+
+    /**
+     * Extrai de forma robusta o JSON de estrutura do curso retornado pela IA.
+     */
+    protected function parseStructureJson(string $structureJson): array
+    {
+        $raw = trim($structureJson);
+        // Remover cercas de código (```json ... ```)
+        if (preg_match('/```+[\w-]*\s*([\s\S]*?)```/m', $raw, $m)) {
+            $raw = $m[1];
+        }
+        // Tentar extrair objeto contendo a chave "modules"
+        if (preg_match('/\{\s*\"modules\"\s*:\s*\[[\s\S]*?\]\s*\}/m', $raw, $m)) {
+            $decoded = json_decode($m[0], true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+        // Tentar decodificar a string inteira
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded) && isset($decoded['modules']) && is_array($decoded['modules'])) {
+            return $decoded;
+        }
+        // Tentar pegar o primeiro objeto JSON na string
+        if (preg_match('/\{[\s\S]*\}/', $raw, $m)) {
+            $decoded = json_decode($m[0], true);
+            if (is_array($decoded) && isset($decoded['modules'])) {
+                return $decoded;
+            }
+        }
+        // Se vier somente um array de módulos, embrulhar
+        if (preg_match('/\[[\s\S]*\]/', $raw, $m)) {
+            $arr = json_decode($m[0], true);
+            if (is_array($arr)) {
+                return ['modules' => $arr];
+            }
+        }
+        return [];
     }
 
     protected function suggestYoutubePtBrVideo(string $courseTitle, string $lessonTitle, string $plainContent, int $userId): ?string

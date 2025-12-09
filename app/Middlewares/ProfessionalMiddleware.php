@@ -13,12 +13,12 @@ class ProfessionalMiddleware
     public function handle(): bool
     {
         if (!isset($_SESSION['user_id'])) {
-            header('Location: /site-freelancePro/login');
+            header('Location: /login');
             exit;
         }
         
         if (($_SESSION['user']['user_type'] ?? '') !== 'professional') {
-            header('Location: /site-freelancePro/login');
+            header('Location: /login');
             exit;
         }
         
