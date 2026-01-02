@@ -9,6 +9,7 @@ use App\Models\EmailConfig;
 use App\Models\Payment;
 use App\Models\Subscription;
 use App\Models\AILog;
+use App\Models\ContentViolation;
 
 /**
  * AdminController - Painel Administrativo
@@ -96,6 +97,7 @@ class AdminController extends Controller
     {
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
 
         $configModel = new AdminConfig();
@@ -125,6 +127,7 @@ class AdminController extends Controller
     {
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
 
         $emailModel = new EmailConfig();
@@ -156,6 +159,7 @@ class AdminController extends Controller
 
         if (empty($email)) {
             $this->json(['error' => 'Informe um email'], 400);
+            return;
         }
 
         try {
@@ -187,11 +191,72 @@ class AdminController extends Controller
 
         if (!$user) {
             $this->json(['error' => 'Usuário não encontrado'], 404);
+            return;
         }
 
         $newStatus = $user['status'] === 'active' ? 'blocked' : 'active';
         $userModel->update($id, ['status' => $newStatus]);
 
         $this->json(['success' => true, 'status' => $newStatus]);
+    }
+
+    /**
+     * Listar violações de conteúdo pendentes
+     */
+    public function violations(): void
+    {
+        $violationModel = new ContentViolation();
+        $violations = $violationModel->getPending();
+
+        $this->setLayout('admin');
+        $this->view('admin/violations', [
+            'title' => 'Violações de Conteúdo',
+            'violations' => $violations,
+            'csrf' => $this->generateCsrfToken(),
+        ]);
+    }
+
+    /**
+     * Aprovar violação (descartar)
+     */
+    public function approveViolation(int $id): void
+    {
+        $user = $this->currentUser();
+        $violationModel = new ContentViolation();
+
+        $violation = $violationModel->find($id);
+        if (!$violation) {
+            $this->json(['error' => 'Violação não encontrada'], 404);
+            return;
+        }
+
+        $violationModel->approve($id, $user['id']);
+        $this->json(['success' => true, 'message' => 'Violação aprovada (descartada).']);
+    }
+
+    /**
+     * Rejeitar violação e penalizar usuário
+     */
+    public function rejectViolation(int $id): void
+    {
+        $user = $this->currentUser();
+        $violationModel = new ContentViolation();
+        $userModel = new User();
+
+        $violation = $violationModel->find($id);
+        if (!$violation) {
+            $this->json(['error' => 'Violação não encontrada'], 404);
+            return;
+        }
+
+        $action = $this->input('action', 'warning');
+        $violationModel->reject($id, $user['id'], $action);
+
+        // Se ação for block, bloquear usuário
+        if ($action === 'block') {
+            $userModel->update($violation['user_id'], ['status' => 'blocked']);
+        }
+
+        $this->json(['success' => true, 'message' => 'Violação rejeitada. Ação: ' . $action]);
     }
 }

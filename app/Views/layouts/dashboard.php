@@ -83,12 +83,33 @@
             <header class="bg-white shadow-sm px-8 py-4 flex items-center justify-between">
                 <h2 class="text-xl font-semibold text-gray-800"><?= $title ?? 'Dashboard' ?></h2>
                 <div class="flex items-center gap-4">
+                    <!-- Notificações -->
+                    <a href="<?= $this->url('notifications') ?>" class="relative p-2 text-gray-500 hover:text-gray-700 transition" title="Notificações">
+                        <i data-lucide="bell" class="w-5 h-5"></i>
+                        <span id="notification-badge" class="hidden absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">0</span>
+                    </a>
                     <span class="text-sm text-gray-600">Olá, <?= htmlspecialchars($_SESSION['user']['name'] ?? 'Usuário') ?></span>
                     <div class="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white font-semibold">
                         <?= strtoupper(substr($_SESSION['user']['name'] ?? 'U', 0, 1)) ?>
                     </div>
                 </div>
             </header>
+            <script>
+            (function(){
+                fetch('<?= $this->url('api/notifications/unread') ?>')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.count > 0) {
+                            const badge = document.getElementById('notification-badge');
+                            if (badge) {
+                                badge.textContent = data.count > 9 ? '9+' : data.count;
+                                badge.classList.remove('hidden');
+                            }
+                        }
+                    })
+                    .catch(() => {});
+            })();
+            </script>
             
             <!-- Page Content -->
             <div class="p-8">

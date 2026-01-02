@@ -23,6 +23,7 @@
                         <th class="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Descrição</th>
                         <th class="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Tipo</th>
                         <th class="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                        <th class="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Recibo</th>
                         <th class="text-right px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Valor</th>
                     </tr>
                 </thead>
@@ -68,6 +69,16 @@
                             $class = $classMap[$status] ?? 'bg-gray-100 text-gray-700';
                             ?>
                             <span class="px-2 py-1 text-xs rounded-full <?= $class ?>"><?= $label ?></span>
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-600">
+                            <?php if (!empty($payment['assas_invoice_url'])): ?>
+                                <a href="<?= htmlspecialchars($payment['assas_invoice_url']) ?>" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-emerald-700 hover:underline">
+                                    <i data-lucide="external-link" class="w-4 h-4"></i>
+                                    Ver recibo
+                                </a>
+                            <?php else: ?>
+                                <span class="text-gray-400 text-xs">-</span>
+                            <?php endif; ?>
                         </td>
                         <td class="px-6 py-4 text-sm text-right font-semibold text-gray-800">
                             R$ <?= number_format((float)($payment['amount'] ?? 0), 2, ',', '.') ?>

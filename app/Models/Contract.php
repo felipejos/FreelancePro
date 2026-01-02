@@ -19,6 +19,8 @@ class Contract extends Model
         'contract_value',
         'platform_fee',
         'professional_amount',
+        'service_contract_path',
+        'service_contract_original_name',
         'status',
         'started_at',
         'completed_at'
@@ -29,34 +31,7 @@ class Contract extends Model
      */
     public function createFromProposal(int $proposalId): ?int
     {
-        // Buscar proposta e projeto
-        $sql = "SELECT p.*, pr.company_id
-                FROM proposals p
-                JOIN projects pr ON p.project_id = pr.id
-                WHERE p.id = :id";
-        
-        $result = $this->query($sql, ['id' => $proposalId]);
-        $proposal = $result[0] ?? null;
-        
-        if (!$proposal) {
-            return null;
-        }
-        
-        // Calcular valores
-        $contractValue = $proposal['proposed_value'];
-        $platformFee = $contractValue * 0.07; // 7%
-        $professionalAmount = $contractValue - $platformFee;
-        
-        return $this->create([
-            'project_id' => $proposal['project_id'],
-            'proposal_id' => $proposalId,
-            'company_id' => $proposal['company_id'],
-            'professional_id' => $proposal['professional_id'],
-            'contract_value' => $contractValue,
-            'platform_fee' => $platformFee,
-            'professional_amount' => $professionalAmount,
-            'status' => 'active'
-        ]);
+        return $this->syncFromProposal($proposalId);
     }
 
     /**
@@ -117,5 +92,51 @@ class Contract extends Model
         
         $result = $this->query($sql, ['id' => $contractId]);
         return $result[0] ?? null;
+    }
+
+    public function getByProposal(int $proposalId): ?array
+    {
+        $sql = "SELECT * FROM {$this->table} WHERE proposal_id = :proposal_id LIMIT 1";
+        $result = $this->query($sql, ['proposal_id' => $proposalId]);
+        return $result[0] ?? null;
+    }
+
+    public function syncFromProposal(int $proposalId): ?int
+    {
+        $sql = "SELECT p.*, pr.company_id
+                FROM proposals p
+                JOIN projects pr ON p.project_id = pr.id
+                WHERE p.id = :id";
+
+        $result = $this->query($sql, ['id' => $proposalId]);
+        $proposal = $result[0] ?? null;
+
+        if (!$proposal) {
+            return null;
+        }
+
+        $contractValue = (float) $proposal['proposed_value'];
+        $platformFee = $contractValue * 0.07;
+        $professionalAmount = $contractValue - $platformFee;
+
+        $payload = [
+            'project_id' => $proposal['project_id'],
+            'proposal_id' => $proposalId,
+            'company_id' => $proposal['company_id'],
+            'professional_id' => $proposal['professional_id'],
+            'contract_value' => $contractValue,
+            'platform_fee' => $platformFee,
+            'professional_amount' => $professionalAmount,
+            'status' => 'active',
+        ];
+
+        $existing = $this->getByProposal($proposalId);
+        if ($existing) {
+            $this->update($existing['id'], $payload);
+            return (int) $existing['id'];
+        }
+
+        $payload['started_at'] = date('Y-m-d H:i:s');
+        return $this->create($payload);
     }
 }

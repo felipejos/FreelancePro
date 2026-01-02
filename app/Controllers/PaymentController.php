@@ -8,7 +8,12 @@ use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
 use App\Models\User;
 use App\Models\AdminConfig;
+use App\Models\TermsAcceptance;
+use App\Models\Project;
+use App\Models\Proposal;
+use App\Models\Contract;
 use App\Services\AssasService;
+use App\Services\NotificationService;
 
 /**
  * PaymentController - Gerenciamento de Pagamentos
@@ -17,11 +22,17 @@ class PaymentController extends Controller
 {
     protected Payment $paymentModel;
     protected Subscription $subscriptionModel;
+    protected Project $projectModel;
+    protected Proposal $proposalModel;
+    protected Contract $contractModel;
 
     public function __construct()
     {
         $this->paymentModel = new Payment();
         $this->subscriptionModel = new Subscription();
+        $this->projectModel = new Project();
+        $this->proposalModel = new Proposal();
+        $this->contractModel = new Contract();
     }
 
     public function plans(): void
@@ -63,6 +74,7 @@ class PaymentController extends Controller
     {
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
 
         $user = $this->currentUser();
@@ -73,9 +85,19 @@ class PaymentController extends Controller
 
         if (!$plan) {
             $this->json(['error' => 'Plano não encontrado'], 404);
+            return;
+        }
+
+        // Verificar aceite de termos
+        if (!$this->input('accept_terms')) {
+            $this->json(['error' => 'Você deve aceitar os Termos de Uso para continuar.'], 400);
+            return;
         }
 
         try {
+            // Registrar aceite de termos
+            $termsModel = new TermsAcceptance();
+            $termsModel->recordAcceptance($user['id'], '1.0');
             // Verificar chave do ASSAS para decidir se vamos simular ou chamar a API real
             $configModel = new AdminConfig();
             $assasApiKey = $configModel->get('assas_api_key', '');
@@ -311,6 +333,153 @@ class PaymentController extends Controller
         $existing = $this->paymentModel->findByAssasId($payment['id']);
         if ($existing) {
             $this->paymentModel->updateStatus($existing['id'], 'failed');
+        }
+    }
+
+    public function processProposalPayment(int $projectId, int $proposalId): void
+    {
+        if (!$this->validateCsrf()) {
+            $this->json(['error' => 'Token inválido'], 400);
+            return;
+        }
+
+        $user = $this->currentUser();
+        $project = $this->projectModel->find($projectId);
+
+        if (!$project || (int) $project['company_id'] !== (int) $user['id']) {
+            $this->json(['error' => 'Não autorizado'], 403);
+            return;
+        }
+
+        $proposal = $this->proposalModel->find($proposalId);
+        if (!$proposal || (int) $proposal['project_id'] !== $projectId) {
+            $this->json(['error' => 'Proposta não encontrada'], 404);
+            return;
+        }
+
+        if ($proposal['status'] === 'paid') {
+            $this->json(['success' => true, 'message' => 'Essa proposta já foi paga.']);
+            return;
+        }
+
+        if ($proposal['status'] !== 'accepted_pending_payment') {
+            $this->json(['error' => 'A proposta ainda não está liberada para pagamento.'], 400);
+            return;
+        }
+
+        if (!$this->input('accept_terms')) {
+            $this->json(['error' => 'É necessário aceitar os termos para prosseguir com o pagamento.'], 400);
+            return;
+        }
+
+        $existingPayment = $this->paymentModel->findProposalPayment($proposalId);
+        if ($existingPayment && in_array($existingPayment['status'], ['confirmed', 'received'], true)) {
+            $this->proposalModel->markPaid($proposalId);
+            $this->json(['success' => true, 'message' => 'Pagamento já confirmado anteriormente.']);
+            return;
+        }
+
+        // garantir que o contrato esteja sincronizado com os valores atuais
+        $this->contractModel->syncFromProposal($proposalId);
+
+        $amount = (float) $proposal['proposed_value'];
+        $description = 'Pagamento da proposta do projeto "' . $project['title'] . '"';
+
+        $paymentPayload = [
+            'user_id' => $user['id'],
+            'type' => 'proposal',
+            'reference_id' => $proposalId,
+            'amount' => $amount,
+            'description' => $description,
+            'payment_method' => 'credit_card',
+            'status' => 'pending',
+        ];
+
+        $configModel = new AdminConfig();
+        $assasApiKey = $configModel->get('assas_api_key', '');
+
+        try {
+            // Registrar aceite de termos (versão 1.0 - pagamento de proposta)
+            $termsModel = new TermsAcceptance();
+            $termsModel->recordAcceptance($user['id'], '1.0-proposal');
+
+            if (empty($assasApiKey)) {
+                $paymentPayload['assas_payment_id'] = 'SIMULATED-PROPOSAL-' . uniqid();
+                $paymentPayload['status'] = 'confirmed';
+                $paymentPayload['paid_at'] = date('Y-m-d H:i:s');
+            } else {
+                $assas = new AssasService();
+
+                $customerData = [
+                    'name' => $this->input('billing_name', $user['name']),
+                    'email' => $this->input('billing_email', $user['email']),
+                    'cpfCnpj' => preg_replace('/\D/', '', (string) $this->input('billing_document', $user['document'] ?? '')),
+                    'phone' => preg_replace('/\D/', '', (string) $this->input('billing_phone', '')),
+                    'postalCode' => preg_replace('/\D/', '', (string) $this->input('billing_zip', '')),
+                    'address' => $this->input('billing_street', ''),
+                    'addressNumber' => $this->input('billing_number', ''),
+                    'complement' => $this->input('billing_complement', ''),
+                    'province' => $this->input('billing_neighborhood', ''),
+                ];
+
+                if (empty($customerData['cpfCnpj'])) {
+                    $this->json(['error' => 'Informe o CPF/CNPJ para o pagamento.'], 400);
+                    return;
+                }
+
+                $cardData = [
+                    'holderName' => trim((string) $this->input('card_holder')),
+                    'number' => preg_replace('/\D/', '', (string) $this->input('card_number')),
+                    'expiryMonth' => $this->input('card_month'),
+                    'expiryYear' => $this->input('card_year'),
+                    'ccv' => $this->input('card_cvv'),
+                ];
+
+                if (in_array('', $cardData, true)) {
+                    $this->json(['error' => 'Preencha todos os dados do cartão.'], 400);
+                    return;
+                }
+
+                $assasPayment = $assas->createCreditCardPayment($customerData, $cardData, $amount, $description);
+                $paymentPayload['assas_payment_id'] = $assasPayment['id'] ?? null;
+                $paymentPayload['assas_invoice_url'] = $assasPayment['invoiceUrl'] ?? null;
+
+                $status = strtoupper($assasPayment['status'] ?? 'PENDING');
+                if (in_array($status, ['RECEIVED', 'CONFIRMED'], true)) {
+                    $paymentPayload['status'] = 'confirmed';
+                    $paymentPayload['paid_at'] = date('Y-m-d H:i:s');
+                }
+            }
+
+            // Confirmação imediata para este fluxo
+            if ($paymentPayload['status'] !== 'confirmed') {
+                $paymentPayload['status'] = 'confirmed';
+                $paymentPayload['paid_at'] = date('Y-m-d H:i:s');
+            }
+
+            $this->paymentModel->create($paymentPayload);
+            $this->proposalModel->markPaid($proposalId);
+
+            $notificationService = new NotificationService();
+            $notificationService->notifyProposalPayment(
+                (int) $proposal['professional_id'],
+                (int) $projectId,
+                $project['title'],
+                $amount
+            );
+            $notificationService->notifyPaymentConfirmed(
+                (int) $user['id'],
+                $amount,
+                $description
+            );
+
+            $this->json([
+                'success' => true,
+                'message' => 'Pagamento confirmado e recibo emitido.',
+                'invoice_url' => $paymentPayload['assas_invoice_url'] ?? null,
+            ]);
+        } catch (\Exception $e) {
+            $this->json(['error' => $e->getMessage()], 500);
         }
     }
 }

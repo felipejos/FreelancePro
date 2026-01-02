@@ -1,5 +1,5 @@
 RewriteEngine On
 
-# Redirecionar para pasta public
-RewriteCond %{REQUEST_URI} !^/public/
-RewriteRule ^(.*)$ public/$1 [L]
+# Redireciona tudo para /public, mantendo o path original
+RewriteCond %{REQUEST_URI} !^/TrabalhoFreelancePro261225/FreelancePro/public/
+RewriteRule ^(.*)$ /TrabalhoFreelancePro261225/FreelancePro/public/$1 [L]

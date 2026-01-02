@@ -119,6 +119,7 @@ class EmployeePanelController extends Controller
     {
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
 
         $user = $this->currentUser();
@@ -128,6 +129,7 @@ class EmployeePanelController extends Controller
 
         if (!$assignment || $assignment['employee_id'] != $user['id']) {
             $this->json(['error' => 'Treinamento não encontrado'], 404);
+            return;
         }
 
         // Limite de tentativas para playbooks
@@ -138,12 +140,14 @@ class EmployeePanelController extends Controller
         $attemptsUsed = (int) ($assignment['attempts'] ?? 0);
         if ($attemptsUsed >= $maxAttemptsPlaybook && (int)($assignment['passed'] ?? 0) !== 1) {
             $this->json(['error' => 'Limite de tentativas atingido. Solicite liberação ao gestor.', 'locked' => true], 403);
+            return;
         }
 
         $answers = $this->input('answers', []);
 
         if (empty($answers)) {
             $this->json(['error' => 'Responda todas as questões'], 400);
+            return;
         }
 
         // Buscar questões para verificar respostas
@@ -358,21 +362,25 @@ class EmployeePanelController extends Controller
     {
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
         $user = $this->currentUser();
         $enrollmentModel = new CourseEnrollment();
         $enrollment = $enrollmentModel->getEnrollment($courseId, $user['id']);
         if (!$enrollment) {
             $this->json(['error' => 'Matrícula não encontrada'], 404);
+            return;
         }
         if (!empty($enrollment['is_locked'])) {
             $this->json(['error' => 'Matrícula bloqueada. Solicite liberação ao gestor.'], 403);
+            return;
         }
 
         $questionModel = new CourseQuestion();
         $questions = $questionModel->getByModule($moduleId);
         if (empty($questions)) {
             $this->json(['error' => 'Não há questões para este módulo'], 400);
+            return;
         }
 
         // Respostas do usuário
@@ -390,6 +398,7 @@ class EmployeePanelController extends Controller
         }
         if (count($processed) < count($questions)) {
             $this->json(['error' => 'Responda todas as questões'], 400);
+            return;
         }
 
         $answerModel = new CourseAnswer();
@@ -407,6 +416,7 @@ class EmployeePanelController extends Controller
         $attemptsUsed = (int) ($existing['attempts'] ?? 0);
         if ($existing && !$existing['passed'] && $attemptsUsed >= $maxAttempts) {
             $this->json(['error' => 'Limite de tentativas atingido. Solicite liberação ao gestor.', 'locked' => true], 403);
+            return;
         }
 
         $attemptsAfter = $attemptsUsed + 1;

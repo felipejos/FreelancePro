@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Models\Payment;
 use App\Models\Subscription;
 use App\Models\AdminConfig;
+use App\Models\TermsAcceptance;
 use App\Services\OpenAIService;
 use App\Services\DocumentParser;
 
@@ -65,6 +66,7 @@ class PlaybookController extends Controller
     {
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
 
         @set_time_limit(120);
@@ -89,6 +91,7 @@ class PlaybookController extends Controller
             }
             if (empty($content)) {
                 $this->json(['error' => 'Não foi possível ler o arquivo enviado. Tente enviar um TXT ou DOCX. Para PDF/DOC, é necessário ter pdftotext/antiword instalados no servidor.'], 400);
+                return;
             }
         }
 
@@ -109,11 +112,13 @@ class PlaybookController extends Controller
             }
             if (empty($content)) {
                 $this->json(['error' => 'Falha ao transcrever o áudio. Tente novamente.'], 400);
+                return;
             }
         }
 
         if (empty($title) || empty($content)) {
             $this->json(['error' => 'Preencha todos os campos'], 400);
+            return;
         }
 
         try {
@@ -191,14 +196,19 @@ class PlaybookController extends Controller
         }
     }
 
+    /**
+     * Transcrever áudio para texto
+     */
     public function transcribe(): void
     {
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
         $user = $this->currentUser();
         if (!isset($_FILES['audio']) || ($_FILES['audio']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
             $this->json(['error' => 'Áudio não enviado'], 400);
+            return;
         }
         $uploadDir = ROOT_PATH . '/public/uploads';
         if (!is_dir($uploadDir)) { @mkdir($uploadDir, 0755, true); }
@@ -208,6 +218,7 @@ class PlaybookController extends Controller
         $dest = $uploadDir . '/' . $name;
         if (!move_uploaded_file($tmp, $dest)) {
             $this->json(['error' => 'Falha ao salvar áudio'], 500);
+            return;
         }
         try {
             $aiService = new OpenAIService();
@@ -244,6 +255,79 @@ class PlaybookController extends Controller
     }
 
     /**
+     * Página de atribuir playbook
+     */
+    public function assignPage(int $id): void
+    {
+        $user = $this->currentUser();
+        $playbook = $this->playbookModel->find($id);
+
+        if (!$playbook || $playbook['company_id'] != $user['id']) {
+            $this->flash('error', 'Playbook não encontrado.');
+            $this->redirect('playbooks');
+        }
+
+        // Buscar funcionários
+        $userModel = new User();
+        $employees = $userModel->getEmployeesByCompany($user['id']);
+
+        // Buscar já atribuídos
+        $assignments = $this->assignmentModel->getByPlaybook($id);
+        $assignedIds = array_column($assignments, 'employee_id');
+
+        $this->setLayout('dashboard');
+        $this->view('playbooks/assign', [
+            'title' => 'Atribuir Playbook',
+            'playbook' => $playbook,
+            'employees' => $employees,
+            'assignedIds' => $assignedIds,
+            'csrf' => $this->generateCsrfToken(),
+        ]);
+    }
+
+    /**
+     * Atribuir playbook a funcionários
+     */
+    public function assign(int $id): void
+    {
+        if (!$this->validateCsrf()) {
+            $this->json(['error' => 'Token inválido'], 400);
+            return;
+        }
+
+        $user = $this->currentUser();
+        $playbook = $this->playbookModel->find($id);
+
+        if (!$playbook || $playbook['company_id'] != $user['id']) {
+            $this->json(['error' => 'Playbook não encontrado'], 404);
+            return;
+        }
+
+        $employeeIds = $this->input('employees', []);
+        if (!is_array($employeeIds)) {
+            $employeeIds = [$employeeIds];
+        }
+
+        $assigned = 0;
+        foreach ($employeeIds as $empId) {
+            $empId = (int)$empId;
+            if ($empId > 0 && !$this->assignmentModel->exists($id, $empId)) {
+                $this->assignmentModel->create([
+                    'playbook_id' => $id,
+                    'employee_id' => $empId,
+                    'status' => 'pending',
+                ]);
+                $assigned++;
+            }
+        }
+
+        $this->json([
+            'success' => true,
+            'message' => "{$assigned} funcionário(s) atribuído(s) com sucesso!",
+        ]);
+    }
+
+    /**
      * Publicar playbook
      */
     public function publish(int $id): void
@@ -253,6 +337,7 @@ class PlaybookController extends Controller
 
         if (!$playbook || $playbook['company_id'] != $user['id']) {
             $this->json(['error' => 'Playbook não encontrado'], 404);
+            return;
         }
 
         // Verificar franquia do plano antes de cobrar taxa
@@ -309,6 +394,7 @@ class PlaybookController extends Controller
 
         if (!$playbook || $playbook['company_id'] != $user['id']) {
             $this->json(['error' => 'Playbook não encontrado'], 404);
+            return;
         }
 
         $html = (string)($playbook['content_html'] ?? '');
@@ -322,10 +408,15 @@ class PlaybookController extends Controller
     }
 
     /**
-     * Página de atribuir playbook
+     * Atualizar/associar vídeo ao playbook
      */
-    public function assignPage(int $id): void
+    public function updateVideo(int $id): void
     {
+        if (!$this->validateCsrf()) {
+            $this->flash('error', 'Token inválido.');
+            $this->redirect("playbooks/{$id}");
+        }
+
         $user = $this->currentUser();
         $playbook = $this->playbookModel->find($id);
 
@@ -334,68 +425,133 @@ class PlaybookController extends Controller
             $this->redirect('playbooks');
         }
 
-        // Buscar funcionários
-        $userModel = new User();
-        $employees = $userModel->getEmployeesByCompany($user['id']);
+        $mode = $this->input('video_mode', 'none');
+        $allowedModes = ['ai', 'url', 'upload', 'none'];
+        if (!in_array($mode, $allowedModes, true)) {
+            $mode = 'none';
+        }
 
-        // Buscar já atribuídos
-        $assignments = $this->assignmentModel->getByPlaybook($id);
-        $assignedIds = array_column($assignments, 'employee_id');
+        $videoUrl = null;
+        $videoOriginal = null;
+        $previousUrl = $playbook['video_url'] ?? '';
 
-        $this->setLayout('dashboard');
-        $this->view('playbooks/assign', [
-            'title' => 'Atribuir Playbook',
-            'playbook' => $playbook,
-            'employees' => $employees,
-            'assignedIds' => $assignedIds,
-            'csrf' => $this->generateCsrfToken(),
-        ]);
+        $removeOldUpload = function () use ($previousUrl) {
+            if ($previousUrl && substr($previousUrl, 0, 27) === 'uploads/playbooks/videos/') {
+                $oldPath = ROOT_PATH . '/public/' . $previousUrl;
+                if (file_exists($oldPath)) {
+                    @unlink($oldPath);
+                }
+            }
+        };
+
+        if (!$this->input('accept_terms')) {
+            $this->flash('error', 'É necessário aceitar os termos para prosseguir.');
+            $this->redirect("playbooks/{$id}");
+        }
+
+        try {
+            if ($mode === 'url') {
+                $videoUrl = trim((string)$this->input('video_url'));
+                if ($videoUrl === '') {
+                    $this->flash('error', 'Informe um link de vídeo.');
+                    $this->redirect("playbooks/{$id}");
+                }
+            } elseif ($mode === 'upload') {
+                if (empty($_FILES['video_file']['name']) || ($_FILES['video_file']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                    $this->flash('error', 'Envie um arquivo de vídeo.');
+                    $this->redirect("playbooks/{$id}");
+                }
+                $ext = strtolower(pathinfo($_FILES['video_file']['name'], PATHINFO_EXTENSION));
+                $allowedExts = ['mp4', 'webm', 'ogg', 'mov', 'm4v'];
+                if (!in_array($ext, $allowedExts, true)) {
+                    $this->flash('error', 'Formato inválido. Use MP4, WEBM, OGG ou MOV.');
+                    $this->redirect("playbooks/{$id}");
+                }
+                $uploadDir = ROOT_PATH . '/public/uploads/playbooks/videos';
+                if (!is_dir($uploadDir)) {
+                    mkdir($uploadDir, 0775, true);
+                }
+                $fileName = 'playbook_' . $id . '_' . time() . '.' . $ext;
+                $targetPath = $uploadDir . '/' . $fileName;
+                if (!move_uploaded_file($_FILES['video_file']['tmp_name'], $targetPath)) {
+                    $this->flash('error', 'Falha ao fazer upload do vídeo.');
+                    $this->redirect("playbooks/{$id}");
+                }
+                $removeOldUpload();
+                $videoUrl = 'uploads/playbooks/videos/' . $fileName;
+                $videoOriginal = $_FILES['video_file']['name'];
+            } elseif ($mode === 'ai') {
+                $aiService = new OpenAIService();
+                $plain = strip_tags($playbook['content_html'] ?? '');
+                $prompt = "Você é um especialista em treinamento corporativo. Indique APENAS uma URL COMPLETA de um vídeo público do YouTube em português do Brasil que seja MUITO RELEVANTE para este playbook.\n\n";
+                $prompt .= "Título do playbook: {$playbook['title']}\n\n";
+                $prompt .= "Resumo do conteúdo (até 600 chars):\n" . mb_substr($plain, 0, 600);
+                $prompt .= "\n\nRegras:\n";
+                $prompt .= "- O vídeo deve ser educacional, não entretenimento.\n";
+                $prompt .= "- Precisa estar em português do Brasil.\n";
+                $prompt .= "- Responda apenas com a URL do YouTube.\n";
+
+                $response = $aiService->generateContent($prompt, $user['id'], 'playbook_video_suggestion');
+                if (!preg_match('/https?:\/\/\S+/', $response, $matches)) {
+                    $this->flash('error', 'Não foi possível obter um vídeo automático. Informe um link manual.');
+                    $this->redirect("playbooks/{$id}");
+                }
+                $videoUrl = $matches[0];
+            } elseif ($mode === 'none') {
+                $removeOldUpload();
+                $videoUrl = null;
+                $videoOriginal = null;
+            }
+
+            // Registrar aceite de termos específico para vídeo de playbook
+            $terms = new TermsAcceptance();
+            $terms->recordAcceptance($user['id'], '1.0-playbook-video');
+
+            $this->playbookModel->update($id, [
+                'video_mode' => $mode,
+                'video_url' => $videoUrl,
+                'video_original_name' => $videoOriginal,
+            ]);
+
+            $this->flash('success', 'Vídeo do playbook atualizado com sucesso.');
+            $this->redirect("playbooks/{$id}");
+        } catch (\Throwable $e) {
+            $this->flash('error', 'Erro ao atualizar vídeo: ' . $e->getMessage());
+            $this->redirect("playbooks/{$id}");
+        }
     }
 
     /**
-     * Atribuir playbook a funcionários
+     * Deletar playbook
      */
-    public function assign(int $id): void
+    public function delete(int $id): void
     {
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
-
         $user = $this->currentUser();
         $playbook = $this->playbookModel->find($id);
 
         if (!$playbook || $playbook['company_id'] != $user['id']) {
             $this->json(['error' => 'Playbook não encontrado'], 404);
+            return;
         }
 
-        $employeeIds = $this->input('employee_ids', []);
-        $dueDate = $this->input('due_date');
-
-        if (empty($employeeIds)) {
-            $this->json(['error' => 'Selecione pelo menos um funcionário'], 400);
+        try {
+            // Apagar dependências
+            $this->questionModel->deleteByPlaybook($id);
+            $this->assignmentModel->deleteByPlaybook($id);
+            // Apagar playbook
+            $this->playbookModel->delete($id);
+            $this->json(['success' => true, 'message' => 'Playbook excluído com sucesso!']);
+        } catch (\Exception $e) {
+            $this->json(['error' => 'Falha ao excluir playbook: ' . $e->getMessage()], 500);
         }
-
-        $assigned = 0;
-        foreach ($employeeIds as $employeeId) {
-            if (!$this->assignmentModel->isAssigned($id, $employeeId)) {
-                $this->assignmentModel->create([
-                    'playbook_id' => $id,
-                    'employee_id' => $employeeId,
-                    'assigned_by' => $user['id'],
-                    'due_date' => $dueDate ?: null,
-                ]);
-                $assigned++;
-            }
-        }
-
-        $this->json([
-            'success' => true,
-            'message' => "{$assigned} funcionário(s) atribuído(s) com sucesso!",
-        ]);
     }
 
     /**
-     * Normaliza HTML do playbook para garantir hierarquia (h2/h3), parágrafos curtos e listas
+     * Normalizar HTML do playbook
      */
     private function normalizePlaybookHtml(string $html): string
     {
@@ -423,71 +579,23 @@ class PlaybookController extends Controller
                 // Subtítulos de seção
                 if (preg_match('/^Seção\s*\d+\s*:\s*(.+)$/i', $line, $m)) {
                     if ($openUl) { $out .= '</ul>'; $openUl = false; }
-                    $out .= '<h3>Seção ' . htmlspecialchars($m[0], ENT_QUOTES, 'UTF-8') . '</h3>';
+                    $out .= '<h3>' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</h3>';
                     continue;
                 }
                 // Itens de lista
-                if (preg_match('/^([\-•\*])\s+(.+)$/u', $line, $m)) {
+                if (preg_match('/^[-•*]\s+(.+)$/', $line, $m)) {
                     if (!$openUl) { $out .= '<ul>'; $openUl = true; }
-                    $out .= '<li>' . htmlspecialchars($m[2], ENT_QUOTES, 'UTF-8') . '</li>';
+                    $out .= '<li>' . htmlspecialchars($m[1], ENT_QUOTES, 'UTF-8') . '</li>';
                     continue;
                 }
-                // Parágrafo padrão
+                // Parágrafos normais
+                if ($openUl) { $out .= '</ul>'; $openUl = false; }
                 $out .= '<p>' . htmlspecialchars($line, ENT_QUOTES, 'UTF-8') . '</p>';
             }
             if ($openUl) { $out .= '</ul>'; }
-            $text = $out;
-        }
-
-        // Normalizações em HTML existente
-        // h1 -> h2
-        $text = preg_replace('/<\s*h1\b([^>]*)>/i', '<h2$1>', $text);
-        $text = preg_replace('/<\s*\/\s*h1\s*>/i', '</h2>', $text);
-
-        // Envolver linhas soltas sem tag em <p>
-        $parts = preg_split('/(\r\n|\r|\n)/', $text);
-        if ($parts && count($parts) > 1) {
-            $rebuilt = '';
-            foreach ($parts as $ln) {
-                $trim = trim($ln);
-                if ($trim === '') { continue; }
-                if ($trim[0] !== '<') {
-                    // linha de texto solta
-                    $rebuilt .= '<p>' . htmlspecialchars($trim, ENT_QUOTES, 'UTF-8') . '</p>';
-                } else {
-                    $rebuilt .= $ln;
-                }
-            }
-            if ($rebuilt !== '') $text = $rebuilt;
+            return $out;
         }
 
         return $text;
-    }
-
-    /**
-     * Deletar playbook
-     */
-    public function delete(int $id): void
-    {
-        if (!$this->validateCsrf()) {
-            $this->json(['error' => 'Token inválido'], 400);
-        }
-        $user = $this->currentUser();
-        $playbook = $this->playbookModel->find($id);
-
-        if (!$playbook || $playbook['company_id'] != $user['id']) {
-            $this->json(['error' => 'Playbook não encontrado'], 404);
-        }
-
-        try {
-            // Apagar dependências
-            $this->questionModel->deleteByPlaybook($id);
-            $this->assignmentModel->deleteByPlaybook($id);
-            // Apagar playbook
-            $this->playbookModel->delete($id);
-            $this->json(['success' => true, 'message' => 'Playbook excluído com sucesso!']);
-        } catch (\Exception $e) {
-            $this->json(['error' => 'Falha ao excluir playbook: ' . $e->getMessage()], 500);
-        }
     }
 }

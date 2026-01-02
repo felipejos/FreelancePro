@@ -17,7 +17,8 @@ class Proposal extends Model
         'cover_letter',
         'proposed_value',
         'estimated_days',
-        'status'
+        'status',
+        'negotiation_status'
     ];
 
     /**
@@ -96,7 +97,7 @@ class Proposal extends Model
         }
         
         // Atualizar status da proposta
-        $this->update($proposalId, ['status' => 'accepted']);
+        $this->update($proposalId, ['status' => 'accepted_pending_payment']);
         
         // Rejeitar outras propostas do projeto
         $this->execute(
@@ -114,5 +115,18 @@ class Proposal extends Model
     public function reject(int $proposalId): bool
     {
         return $this->update($proposalId, ['status' => 'rejected']);
+    }
+
+    public function updateNegotiationStatus(int $proposalId, string $status): bool
+    {
+        return $this->update($proposalId, ['negotiation_status' => $status]);
+    }
+
+    public function markPaid(int $proposalId): bool
+    {
+        return $this->update($proposalId, [
+            'status' => 'paid',
+            'negotiation_status' => 'accepted'
+        ]);
     }
 }

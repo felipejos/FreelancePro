@@ -208,6 +208,7 @@ class EmployeeController extends Controller
 
         if (!$employee || $employee['company_id'] != $user['id']) {
             $this->json(['error' => 'Funcionário não encontrado'], 404);
+            return;
         }
 
         $this->userModel->delete($id);
@@ -228,6 +229,7 @@ class EmployeeController extends Controller
 
         if (!$employee || $employee['company_id'] != $user['id']) {
             $this->json(['error' => 'Funcionário não encontrado'], 404);
+            return;
         }
 
         $assignmentModel = new PlaybookAssignment();
@@ -235,6 +237,7 @@ class EmployeeController extends Controller
 
         if (!$assignment || $assignment['employee_id'] != $employeeId) {
             $this->json(['error' => 'Treinamento não encontrado'], 404);
+            return;
         }
 
         $assignmentModel->reset($assignmentId);

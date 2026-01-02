@@ -44,6 +44,10 @@
                     <i data-lucide="cpu" class="w-5 h-5"></i>
                     <span>Logs de IA</span>
                 </a>
+                <a href="<?= $this->url('admin/violations') ?>" class="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-300 hover:bg-gray-700 transition">
+                    <i data-lucide="shield-alert" class="w-5 h-5"></i>
+                    <span>Violações</span>
+                </a>
             </nav>
             
             <div class="p-4 border-t border-gray-700">

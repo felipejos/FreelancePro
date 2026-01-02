@@ -38,9 +38,17 @@ $router->post('playbooks/transcribe', 'PlaybookController@transcribe', ['Company
 $router->get('playbooks/{id}', 'PlaybookController@show', ['CompanyMiddleware']);
 $router->post('playbooks/{id}/publish', 'PlaybookController@publish', ['CompanyMiddleware']);
 $router->post('playbooks/{id}/reformat', 'PlaybookController@reformat', ['CompanyMiddleware']);
+$router->post('playbooks/{id}/video', 'PlaybookController@updateVideo', ['CompanyMiddleware']);
 $router->get('playbooks/{id}/assign', 'PlaybookController@assignPage', ['CompanyMiddleware']);
 $router->post('playbooks/{id}/assign', 'PlaybookController@assign', ['CompanyMiddleware']);
 $router->delete('playbooks/{id}', 'PlaybookController@delete', ['CompanyMiddleware']);
+
+// API pública (autenticada) - Playbooks/Vídeos
+$router->get('api/playbooks', 'ApiPlaybookController@index', ['CompanyMiddleware']);
+$router->get('api/playbooks/{id}', 'ApiPlaybookController@show', ['CompanyMiddleware']);
+$router->post('api/playbooks', 'ApiPlaybookController@store', ['CompanyMiddleware']);
+$router->post('api/playbooks/{id}/video', 'ApiPlaybookController@updateVideo', ['CompanyMiddleware']);
+$router->delete('api/playbooks/{id}', 'ApiPlaybookController@delete', ['CompanyMiddleware']);
 
 // Cursos
 $router->get('courses', 'CourseController@index', ['CompanyMiddleware']);
@@ -77,7 +85,13 @@ $router->get('projects/{id}', 'ProjectController@show', ['CompanyMiddleware']);
 $router->post('projects/{id}/cancel', 'ProjectController@cancel', ['CompanyMiddleware']);
 $router->post('projects/{id}/proposals/{proposalId}/accept', 'ProjectController@acceptProposal', ['CompanyMiddleware']);
 $router->post('projects/{id}/proposals/{proposalId}/reject', 'ProjectController@rejectProposal', ['CompanyMiddleware']);
+$router->post('projects/{id}/proposals/{proposalId}/pay', 'PaymentController@processProposalPayment', ['CompanyMiddleware']);
 $router->post('projects/{id}/proposals/{proposalId}/message', 'ProjectController@sendMessage', ['CompanyMiddleware']);
+$router->post('projects/{id}/proposals/{proposalId}/counter', 'CounterProposalController@sendByCompany', ['CompanyMiddleware']);
+$router->post('projects/{id}/proposals/{proposalId}/counter/{counterId}/accept', 'CounterProposalController@acceptAsCompany', ['CompanyMiddleware']);
+$router->post('projects/{id}/proposals/{proposalId}/counter/{counterId}/reject', 'CounterProposalController@rejectAsCompany', ['CompanyMiddleware']);
+$router->post('projects/{id}/contracts/{contractId}/upload', 'ProjectController@uploadContractDocument', ['CompanyMiddleware']);
+$router->get('contracts/{contractId}/download', 'ProjectController@downloadContractDocument', ['CompanyMiddleware']);
 
 // Contratos
 $router->get('contracts', 'ProjectController@contracts', ['CompanyMiddleware']);
@@ -121,9 +135,15 @@ $router->get('professional/projects/{id}', 'ProfessionalController@viewProject',
 $router->post('professional/projects/{id}/proposal', 'ProfessionalController@submitProposal', ['ProfessionalMiddleware']);
 $router->post('professional/projects/{id}/accept', 'ProfessionalController@acceptProject', ['ProfessionalMiddleware']);
 $router->get('professional/proposals', 'ProfessionalController@myProposals', ['ProfessionalMiddleware']);
+$router->post('professional/proposals/{id}/edit', 'ProfessionalController@editProposal', ['ProfessionalMiddleware']);
+$router->post('professional/proposals/{id}/withdraw', 'ProfessionalController@withdrawProposal', ['ProfessionalMiddleware']);
 $router->get('professional/contracts', 'ProfessionalController@myContracts', ['ProfessionalMiddleware']);
+$router->get('professional/contracts/{contractId}/download', 'ProjectController@downloadContractDocument', ['ProfessionalMiddleware']);
 $router->get('professional/reviews', 'ProfessionalController@reviews', ['ProfessionalMiddleware']);
 $router->post('professional/projects/{id}/proposals/{proposalId}/message', 'ProfessionalController@sendMessage', ['ProfessionalMiddleware']);
+$router->post('professional/projects/{id}/proposals/{proposalId}/counter', 'CounterProposalController@sendByProfessional', ['ProfessionalMiddleware']);
+$router->post('professional/projects/{id}/proposals/{proposalId}/counter/{counterId}/accept', 'CounterProposalController@acceptAsProfessional', ['ProfessionalMiddleware']);
+$router->post('professional/projects/{id}/proposals/{proposalId}/counter/{counterId}/reject', 'CounterProposalController@rejectAsProfessional', ['ProfessionalMiddleware']);
 
 // ==========================================
 // ROTAS DO ADMIN
@@ -140,6 +160,18 @@ $router->get('admin/email', 'AdminController@emailConfig', ['AdminMiddleware']);
 $router->post('admin/email', 'AdminController@saveEmailConfig', ['AdminMiddleware']);
 $router->post('admin/email/test', 'AdminController@testEmail', ['AdminMiddleware']);
 $router->get('admin/ai-logs', 'AdminController@aiLogs', ['AdminMiddleware']);
+$router->get('admin/violations', 'AdminController@violations', ['AdminMiddleware']);
+$router->post('admin/violations/{id}/approve', 'AdminController@approveViolation', ['AdminMiddleware']);
+$router->post('admin/violations/{id}/reject', 'AdminController@rejectViolation', ['AdminMiddleware']);
+
+// ==========================================
+// ROTAS DE NOTIFICAÇÕES (AUTENTICADO)
+// ==========================================
+
+$router->get('notifications', 'NotificationController@index', ['AuthMiddleware']);
+$router->post('notifications/{id}/read', 'NotificationController@markRead', ['AuthMiddleware']);
+$router->post('notifications/read-all', 'NotificationController@markAllRead', ['AuthMiddleware']);
+$router->get('api/notifications/unread', 'NotificationController@getUnread', ['AuthMiddleware']);
 
 // ==========================================
 // ROTAS DE CONTA (AUTENTICADO)

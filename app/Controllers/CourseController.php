@@ -64,8 +64,13 @@ class CourseController extends Controller
      */
     public function generate(): void
     {
+        // Aumentar tempo de execução do PHP para operações longas
+        set_time_limit(300);
+        ini_set('max_execution_time', '300');
+
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
 
         $user = $this->currentUser();
@@ -80,12 +85,35 @@ class CourseController extends Controller
 
         if (empty($title) || empty($description)) {
             $this->json(['error' => 'Preencha todos os campos'], 400);
+            return;
         }
 
         try {
-            // MODO RÁPIDO: evitar timeouts no /courses/generate
-            // Pula chamadas à IA e cria uma estrutura mínima (4x3) imediatamente.
-            $structure = $this->createSkeletonStructure($title);
+            $aiService = new OpenAIService();
+            $structure = null;
+
+            // Gerar estrutura completa com IA (conteúdo extenso)
+            $structurePrompt = $this->buildCourseGenerationPrompt($title, $description, $baseContent);
+
+            try {
+                $structureJson = $aiService->generateContent($structurePrompt, $user['id'], 'generate_course');
+                $structure = $this->parseStructureJson($structureJson);
+
+                // Se a estrutura não tiver módulos suficientes, tentar novamente
+                if (empty($structure['modules']) || count($structure['modules']) < 4) {
+                    $retryPrompt = $structurePrompt . "\nIMPORTANTE: Responda SOMENTE com JSON válido. O curso DEVE ter EXATAMENTE 4 módulos com 3 aulas cada.";
+                    $structureJson = $aiService->generateContent($retryPrompt, $user['id'], 'generate_course_retry');
+                    $structure = $this->parseStructureJson($structureJson);
+                }
+            } catch (\Exception $ex) {
+                // Se der timeout/erro de API, usar fallback com conteúdo básico
+                $structure = null;
+            }
+
+            // Fallback: criar estrutura com conteúdo gerado localmente
+            if (empty($structure['modules'])) {
+                $structure = $this->createRichSkeletonStructure($title, $description);
+            }
 
             // Criar curso
             $courseId = $this->courseModel->create([
@@ -112,6 +140,12 @@ class CourseController extends Controller
                         $candidate = $lessonData['video_url'] ?? null;
                         if ($candidate && $this->isYoutubeUrl($candidate) && $this->isYoutubeVideoAvailable($candidate) && $this->isYoutubeVideoPortuguese($candidate)) {
                             $videoUrl = $candidate;
+                        } else {
+                            // Tentar buscar vídeo do YouTube se não veio da IA
+                            $plain = strip_tags($lessonData['content_html'] ?? '');
+                            if ($plain !== '') {
+                                $videoUrl = $this->suggestYoutubePtBrVideo($title, $lessonData['title'] ?? '', $plain, $user['id']);
+                            }
                         }
                     }
 
@@ -124,8 +158,15 @@ class CourseController extends Controller
                     ]);
                 }
 
-                // Gerar questionário padrão (evita chamadas lentas à IA na criação)
-                $questions = $this->buildDefaultQuestions($moduleData['title'] ?? 'Módulo');
+                // Gerar questionário com IA ou usar padrão
+                $moduleHtml = '';
+                foreach ($moduleData['lessons'] ?? [] as $lessonData) {
+                    $moduleHtml .= (string)($lessonData['content_html'] ?? '') . "\n\n";
+                }
+                $questions = $this->generateModuleQuestions($moduleHtml, $user['id']);
+                if (empty($questions)) {
+                    $questions = $this->buildDefaultQuestions($moduleData['title'] ?? 'Módulo');
+                }
                 if (!empty($questions)) {
                     $courseQuestionModel = new CourseQuestion();
                     $courseQuestionModel->createBatch($moduleId, $questions);
@@ -151,6 +192,10 @@ class CourseController extends Controller
      */
     public function regenerate(int $id): void
     {
+        // Aumentar tempo de execução do PHP para operações longas
+        set_time_limit(300);
+        ini_set('max_execution_time', '300');
+
         if (!$this->validateCsrf()) {
             $this->flash('error', 'Token inválido. Tente novamente.');
             $this->redirect("courses/{$id}");
@@ -204,8 +249,8 @@ class CourseController extends Controller
             }
 
             if (empty($structure['modules'])) {
-                // Fallback: criar estrutura mínima sem depender da IA
-                $structure = $this->createSkeletonStructure($title);
+                // Fallback: criar estrutura rica sem depender da IA
+                $structure = $this->createRichSkeletonStructure($title, $description);
             }
 
             // Remover módulos (e aulas/questões relacionadas via FK) atuais
@@ -330,6 +375,7 @@ class CourseController extends Controller
     {
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
 
         $user = $this->currentUser();
@@ -338,6 +384,7 @@ class CourseController extends Controller
 
         if (!$course || $course['company_id'] != $user['id']) {
             $this->json(['error' => 'Curso não encontrado'], 404);
+            return;
         }
 
         $this->courseModel->update($id, ['status' => 'published']);
@@ -431,6 +478,7 @@ class CourseController extends Controller
     {
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
 
         $user = $this->currentUser();
@@ -438,12 +486,14 @@ class CourseController extends Controller
 
         if (!$course || $course['company_id'] != $user['id']) {
             $this->json(['error' => 'Curso não encontrado'], 404);
+            return;
         }
 
         $employeeIds = $this->input('employee_ids', []);
 
         if (empty($employeeIds)) {
             $this->json(['error' => 'Selecione pelo menos um funcionário'], 400);
+            return;
         }
 
         $enrolled = 0;
@@ -803,17 +853,20 @@ class CourseController extends Controller
     {
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
         $user = $this->currentUser();
         $enrollment = (new CourseEnrollment())->find($enrollmentId);
         if (!$enrollment) {
             $this->json(['error' => 'Matrícula não encontrada'], 404);
+            return;
         }
         // Verificar se matrícula pertence a um curso da empresa logada
         $sql = "SELECT c.* FROM courses c JOIN course_enrollments e ON e.course_id = c.id WHERE e.id = :id LIMIT 1";
         $course = $this->courseModel->query($sql, ['id' => $enrollmentId])[0] ?? null;
         if (!$course || $course['company_id'] != $user['id']) {
             $this->json(['error' => 'Sem permissão'], 403);
+            return;
         }
         // Desbloquear matrícula e resultados de módulos
         (new CourseEnrollment())->update($enrollmentId, ['is_locked' => 0]);
@@ -910,6 +963,137 @@ class CourseController extends Controller
         return $qs;
     }
 
+    /**
+     * Constrói o prompt para geração de curso com IA (conteúdo extenso)
+     */
+    protected function buildCourseGenerationPrompt(string $title, string $description, string $baseContent = ''): string
+    {
+        $prompt = "Você é um instrutor corporativo experiente. Crie a estrutura COMPLETA de um curso online em português do Brasil sobre o tema abaixo.\n\n";
+        $prompt .= "Título do curso: {$title}\n";
+        $prompt .= "Descrição do curso: {$description}\n\n";
+        if (!empty($baseContent)) {
+            $prompt .= "Conteúdo base / referências que devem ser usadas:\n{$baseContent}\n\n";
+        }
+        $prompt .= "Regras OBRIGATÓRIAS:\n";
+        $prompt .= "- O curso deve ter EXATAMENTE 4 módulos e CADA módulo deve ter EXATAMENTE 3 aulas.\n";
+        $prompt .= "- Para cada aula, escreva um conteúdo HTML EXTENSO e COMPLETO em português brasileiro.\n";
+        $prompt .= "- Cada aula DEVE ter no mínimo 1500 caracteres de conteúdo HTML.\n";
+        $prompt .= "- Use tags HTML semânticas: <h2>, <h3>, <p>, <ul>, <li>, <ol>, <strong>, <em>, <blockquote>.\n";
+        $prompt .= "- Inclua exemplos práticos, dicas, boas práticas e exercícios quando aplicável.\n";
+        $prompt .= "- O HTML deve ser autocontido, sem usar <html>, <head> ou <body>.\n";
+        $prompt .= "- Não inclua explicações fora do JSON.\n";
+        $prompt .= "- Para cada aula, inclua um campo video_url com uma URL COMPLETA de um vídeo público RELEVANTE no YouTube, em português do Brasil. Se não houver uma boa opção em português, defina video_url como null.\n";
+        $prompt .= "Retorne APENAS um JSON VÁLIDO no seguinte formato, sem markdown, sem comentários:\n";
+        $prompt .= '{"modules":[{"title":"título do módulo","description":"descrição do módulo","lessons":[{"title":"título da aula","content_html":"<h2>...</h2><p>conteúdo extenso...</p>","video_url":"https://www.youtube.com/watch?v=..."}]}]}';
+        return $prompt;
+    }
+
+    /**
+     * Fallback: cria estrutura rica de 4 módulos x 3 aulas com conteúdo gerado localmente (mínimo 20000 chars total)
+     */
+    protected function createRichSkeletonStructure(string $courseTitle, string $description = ''): array
+    {
+        $modules = [];
+        $moduleTitles = [
+            'Introdução e Fundamentos',
+            'Conceitos Avançados e Técnicas',
+            'Aplicação Prática e Exercícios',
+            'Melhores Práticas e Conclusão'
+        ];
+        
+        $lessonTemplates = [
+            [
+                ['Introdução ao tema', 'Conceitos básicos', 'Primeiros passos'],
+                ['Aprofundando conhecimentos', 'Técnicas essenciais', 'Ferramentas importantes'],
+                ['Projeto prático', 'Exercícios aplicados', 'Estudo de casos'],
+                ['Boas práticas', 'Dicas avançadas', 'Próximos passos']
+            ]
+        ];
+
+        for ($i = 0; $i < 4; $i++) {
+            $lessons = [];
+            for ($j = 0; $j < 3; $j++) {
+                $lessonTitle = $lessonTemplates[0][$i][$j] ?? "Aula " . ($j + 1);
+                $content = $this->generateRichLessonContent($courseTitle, $moduleTitles[$i], $lessonTitle, $j + 1);
+                $lessons[] = [
+                    'title' => $lessonTitle,
+                    'content_html' => $content,
+                    'video_url' => null
+                ];
+            }
+            $modules[] = [
+                'title' => 'Módulo ' . ($i + 1) . ': ' . $moduleTitles[$i],
+                'description' => "Conteúdos essenciais sobre {$moduleTitles[$i]} aplicados a {$courseTitle}.",
+                'lessons' => $lessons,
+            ];
+        }
+        return ['modules' => $modules];
+    }
+
+    /**
+     * Gera conteúdo HTML rico para uma aula (fallback sem IA)
+     */
+    protected function generateRichLessonContent(string $courseTitle, string $moduleTitle, string $lessonTitle, int $lessonNumber): string
+    {
+        $html = "<h2>{$lessonTitle}</h2>\n\n";
+        $html .= "<p>Bem-vindo à aula sobre <strong>{$lessonTitle}</strong>, parte do módulo <em>{$moduleTitle}</em> do curso <strong>{$courseTitle}</strong>. Nesta aula, você aprenderá conceitos fundamentais e práticos que irão aprimorar suas habilidades profissionais.</p>\n\n";
+        
+        $html .= "<h3>Objetivos da Aula</h3>\n";
+        $html .= "<p>Ao final desta aula, você será capaz de:</p>\n";
+        $html .= "<ul>\n";
+        $html .= "<li>Compreender os principais conceitos relacionados a {$lessonTitle}</li>\n";
+        $html .= "<li>Aplicar técnicas práticas em situações reais do ambiente corporativo</li>\n";
+        $html .= "<li>Identificar oportunidades de melhoria em processos existentes</li>\n";
+        $html .= "<li>Desenvolver habilidades essenciais para sua carreira profissional</li>\n";
+        $html .= "</ul>\n\n";
+
+        $html .= "<h3>Conceitos Fundamentais</h3>\n";
+        $html .= "<p>O tema <strong>{$lessonTitle}</strong> é fundamental para qualquer profissional que deseja se destacar na área de {$courseTitle}. Compreender esses conceitos permite que você tome decisões mais assertivas e contribua de forma significativa para os resultados da organização.</p>\n\n";
+        
+        $html .= "<p>Os principais aspectos que devemos considerar incluem:</p>\n";
+        $html .= "<ol>\n";
+        $html .= "<li><strong>Fundamentos teóricos:</strong> Base conceitual necessária para compreensão do tema</li>\n";
+        $html .= "<li><strong>Aplicações práticas:</strong> Como utilizar o conhecimento no dia a dia</li>\n";
+        $html .= "<li><strong>Ferramentas e recursos:</strong> Instrumentos que facilitam a implementação</li>\n";
+        $html .= "<li><strong>Métricas e indicadores:</strong> Como medir o sucesso das iniciativas</li>\n";
+        $html .= "</ol>\n\n";
+
+        $html .= "<h3>Desenvolvimento do Tema</h3>\n";
+        $html .= "<p>Para dominar {$lessonTitle}, é essencial desenvolver uma abordagem sistemática. Isso envolve não apenas o conhecimento teórico, mas também a capacidade de adaptar conceitos às necessidades específicas de cada situação.</p>\n\n";
+        
+        $html .= "<blockquote><p><em>\"O aprendizado contínuo é a chave para o sucesso profissional. Cada nova habilidade adquirida abre portas para novas oportunidades.\"</em></p></blockquote>\n\n";
+
+        $html .= "<h3>Exemplos Práticos</h3>\n";
+        $html .= "<p>Vamos analisar alguns exemplos práticos de como aplicar os conceitos de {$lessonTitle}:</p>\n\n";
+        $html .= "<p><strong>Exemplo 1:</strong> Considere uma situação onde você precisa implementar melhorias em um processo existente. O primeiro passo é realizar um diagnóstico completo, identificando pontos fortes e oportunidades de melhoria.</p>\n\n";
+        $html .= "<p><strong>Exemplo 2:</strong> Em um projeto de equipe, a comunicação eficaz é fundamental. Utilize técnicas de {$lessonTitle} para garantir que todos os membros estejam alinhados com os objetivos e prazos estabelecidos.</p>\n\n";
+
+        $html .= "<h3>Dicas Importantes</h3>\n";
+        $html .= "<ul>\n";
+        $html .= "<li>Pratique regularmente os conceitos aprendidos para fixar o conhecimento</li>\n";
+        $html .= "<li>Busque feedback de colegas e supervisores para identificar áreas de melhoria</li>\n";
+        $html .= "<li>Mantenha-se atualizado sobre as tendências e novidades da área</li>\n";
+        $html .= "<li>Compartilhe seu conhecimento com outros membros da equipe</li>\n";
+        $html .= "<li>Documente suas experiências para referência futura</li>\n";
+        $html .= "</ul>\n\n";
+
+        $html .= "<h3>Exercício Proposto</h3>\n";
+        $html .= "<p>Para consolidar o aprendizado desta aula, realize o seguinte exercício:</p>\n";
+        $html .= "<ol>\n";
+        $html .= "<li>Identifique uma situação real em seu ambiente de trabalho onde os conceitos de {$lessonTitle} podem ser aplicados</li>\n";
+        $html .= "<li>Elabore um plano de ação com etapas claras e mensuráveis</li>\n";
+        $html .= "<li>Implemente as ações propostas e monitore os resultados</li>\n";
+        $html .= "<li>Reflita sobre os aprendizados e ajuste sua abordagem conforme necessário</li>\n";
+        $html .= "</ol>\n\n";
+
+        $html .= "<h3>Resumo da Aula</h3>\n";
+        $html .= "<p>Nesta aula, exploramos os principais aspectos de <strong>{$lessonTitle}</strong>, incluindo conceitos fundamentais, exemplos práticos e dicas para aplicação no ambiente corporativo. Lembre-se de que o aprendizado é um processo contínuo e que a prática constante é essencial para o desenvolvimento profissional.</p>\n\n";
+
+        $html .= "<p>Na próxima aula, continuaremos aprofundando nossos conhecimentos sobre {$moduleTitle}, explorando novos conceitos e técnicas que complementam o que foi aprendido até aqui.</p>\n";
+
+        return $html;
+    }
+
     protected function suggestYoutubePtBrVideo(string $courseTitle, string $lessonTitle, string $plainContent, int $userId): ?string
     {
         try {
@@ -951,6 +1135,7 @@ class CourseController extends Controller
 
         if (!$course || $course['company_id'] != $user['id']) {
             $this->json(['error' => 'Curso não encontrado'], 404);
+            return;
         }
 
         $this->courseModel->delete($id);

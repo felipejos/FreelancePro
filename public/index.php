@@ -4,6 +4,10 @@
  * Plataforma Corporativa de Treinamentos + Gestão de Freelancers com IA
  */
 
+// Garantir tempo suficiente para operações longas (ex.: geração de cursos via IA)
+set_time_limit(300);
+ini_set('max_execution_time', '300');
+
 // Definir constante do caminho raiz
 define('ROOT_PATH', dirname(__DIR__));
 

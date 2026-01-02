@@ -110,9 +110,23 @@
                         </div>
                     </div>
                     
+                    <!-- Aceite de Termos (Obrigatório) -->
+                    <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                        <label class="flex items-start gap-3 cursor-pointer">
+                            <input type="checkbox" name="accept_terms" id="acceptTerms" required
+                                   class="mt-1 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                            <span class="text-sm text-gray-700">
+                                Li e aceito os <a href="<?= $this->url('terms') ?>" target="_blank" class="text-blue-600 hover:underline font-medium">Termos de Uso</a> 
+                                e a <a href="<?= $this->url('privacy') ?>" target="_blank" class="text-blue-600 hover:underline font-medium">Política de Privacidade</a> 
+                                da plataforma FreelancePro.
+                                <span class="text-red-500">*</span>
+                            </span>
+                        </label>
+                    </div>
+                    
                     <div id="checkoutError" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm"></div>
 
-                    <button type="submit" id="submitBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-lg font-semibold transition flex items-center justify-center gap-2">
+                    <button type="submit" id="submitBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-lg font-semibold transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                         <i data-lucide="lock" class="w-5 h-5"></i>
                         Finalizar Assinatura
                     </button>

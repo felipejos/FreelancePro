@@ -11,10 +11,10 @@ use App\Models\AILog;
 class OpenAIService
 {
     protected string $apiKey;
-    protected string $model = 'gpt-3.5-turbo';
+    protected string $model = 'gpt-4o-mini';
     protected string $apiUrl = 'https://api.openai.com/v1/chat/completions';
-    protected int $maxTokens = 1200;
-    protected int $timeout = 90;
+    protected int $maxTokens = 4096;
+    protected int $timeout = 120;
 
     public function __construct()
     {

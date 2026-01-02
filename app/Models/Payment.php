@@ -100,4 +100,15 @@ class Payment extends Model
         $result = $this->query($sql);
         return $result[0] ?? [];
     }
+
+    public function findProposalPayment(int $proposalId): ?array
+    {
+        $sql = "SELECT * FROM {$this->table}
+                WHERE type = 'proposal' AND reference_id = :reference_id
+                ORDER BY created_at DESC
+                LIMIT 1";
+
+        $result = $this->query($sql, ['reference_id' => $proposalId]);
+        return $result[0] ?? null;
+    }
 }

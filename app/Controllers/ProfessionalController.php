@@ -9,6 +9,8 @@ use App\Models\Contract;
 use App\Models\Review;
 use App\Models\User;
 use App\Models\ProjectMessage;
+use App\Models\ProposalCounteroffer;
+use App\Services\ContentMonitorService;
 
 /**
  * ProfessionalController - Área do Profissional/Freelancer
@@ -72,6 +74,8 @@ class ProfessionalController extends Controller
         $user = $this->currentUser();
         $projectModel = new Project();
         $proposalModel = new Proposal();
+        $counterofferModel = new ProposalCounteroffer();
+        $contractModel = new Contract();
 
         $project = $projectModel->getWithDetails($id);
 
@@ -84,6 +88,8 @@ class ProfessionalController extends Controller
 
         $proposal = null;
         $messages = [];
+        $counteroffers = [];
+        $contract = null;
 
         if ($hasProposal) {
             $proposal = $proposalModel->getForProfessionalInProject($id, $user['id']);
@@ -91,6 +97,8 @@ class ProfessionalController extends Controller
             if ($proposal) {
                 $messageModel = new ProjectMessage();
                 $messages = $messageModel->getByProjectAndProposal($id, $proposal['id']);
+                $counteroffers = $counterofferModel->getByProposal($proposal['id']);
+                $contract = $contractModel->getByProposal($proposal['id']);
             }
         }
 
@@ -101,6 +109,8 @@ class ProfessionalController extends Controller
             'hasProposal' => $hasProposal,
             'proposal' => $proposal,
             'messages' => $messages,
+            'counteroffers' => $counteroffers,
+            'contract' => $contract,
             'csrf' => $this->generateCsrfToken(),
         ]);
     }
@@ -196,6 +206,15 @@ class ProfessionalController extends Controller
             $this->redirect("professional/projects/{$projectId}");
         }
 
+        // Monitoramento de IA: verificar conteúdo
+        $monitor = new ContentMonitorService();
+        $result = $monitor->process($text, $user['id'], 'project_message');
+
+        if (!$result['allowed']) {
+            $this->flash('error', $result['message'] ?? 'Conteúdo não permitido.');
+            $this->redirect("professional/projects/{$projectId}");
+        }
+
         $messageModel = new ProjectMessage();
         $messageModel->create([
             'project_id' => $projectId,
@@ -212,13 +231,22 @@ class ProfessionalController extends Controller
     {
         if (!$this->validateCsrf()) {
             $this->json(['error' => 'Token inválido'], 400);
+            return;
         }
 
         $user = $this->currentUser();
         $proposalModel = new Proposal();
+        $projectModel = new Project();
 
         if ($proposalModel->hasSubmitted($projectId, $user['id'])) {
             $this->json(['error' => 'Você já enviou uma proposta'], 400);
+            return;
+        }
+
+        $project = $projectModel->find($projectId);
+        if (!$project) {
+            $this->json(['error' => 'Projeto não encontrado'], 404);
+            return;
         }
 
         $proposalModel->create([
@@ -228,6 +256,10 @@ class ProfessionalController extends Controller
             'proposed_value' => (float) $this->input('proposed_value'),
             'estimated_days' => (int) $this->input('estimated_days'),
         ]);
+
+        // Notificar a empresa sobre a nova proposta
+        $notificationService = new \App\Services\NotificationService();
+        $notificationService->notifyNewProposal($project['company_id'], $projectId, $project['title'], $user['name']);
 
         $this->json(['success' => true, 'message' => 'Proposta enviada!']);
     }
@@ -242,7 +274,97 @@ class ProfessionalController extends Controller
         $this->view('professional/proposals', [
             'title' => 'Minhas Propostas',
             'proposals' => $proposals,
+            'csrf' => $this->generateCsrfToken(),
         ]);
+    }
+
+    /**
+     * Editar proposta (apenas se pendente e projeto aberto)
+     */
+    public function editProposal(int $proposalId): void
+    {
+        if (!$this->validateCsrf()) {
+            $this->json(['error' => 'Token inválido'], 400);
+            return;
+        }
+
+        $user = $this->currentUser();
+        $proposalModel = new Proposal();
+        $projectModel = new Project();
+
+        $proposal = $proposalModel->find($proposalId);
+
+        if (!$proposal || $proposal['professional_id'] != $user['id']) {
+            $this->json(['error' => 'Proposta não encontrada'], 404);
+            return;
+        }
+
+        // Verificar se pode editar (status pendente)
+        if ($proposal['status'] !== 'pending') {
+            $this->json(['error' => 'Não é possível editar uma proposta que já foi processada'], 400);
+            return;
+        }
+
+        // Verificar se projeto ainda está aberto
+        $project = $projectModel->find($proposal['project_id']);
+        if (!$project || $project['status'] !== 'open') {
+            $this->json(['error' => 'O projeto não está mais aberto para edições'], 400);
+            return;
+        }
+
+        // Atualizar proposta
+        $data = [];
+        
+        if ($this->input('proposed_value') !== null) {
+            $data['proposed_value'] = (float) $this->input('proposed_value');
+        }
+        
+        if ($this->input('estimated_days') !== null) {
+            $data['estimated_days'] = (int) $this->input('estimated_days');
+        }
+        
+        if ($this->input('cover_letter') !== null) {
+            $data['cover_letter'] = trim($this->input('cover_letter'));
+        }
+
+        if (empty($data)) {
+            $this->json(['error' => 'Nenhum dado para atualizar'], 400);
+            return;
+        }
+
+        $proposalModel->update($proposalId, $data);
+
+        $this->json(['success' => true, 'message' => 'Proposta atualizada com sucesso!']);
+    }
+
+    /**
+     * Retirar proposta
+     */
+    public function withdrawProposal(int $proposalId): void
+    {
+        if (!$this->validateCsrf()) {
+            $this->json(['error' => 'Token inválido'], 400);
+            return;
+        }
+
+        $user = $this->currentUser();
+        $proposalModel = new Proposal();
+
+        $proposal = $proposalModel->find($proposalId);
+
+        if (!$proposal || $proposal['professional_id'] != $user['id']) {
+            $this->json(['error' => 'Proposta não encontrada'], 404);
+            return;
+        }
+
+        if ($proposal['status'] !== 'pending') {
+            $this->json(['error' => 'Não é possível retirar uma proposta que já foi processada'], 400);
+            return;
+        }
+
+        $proposalModel->update($proposalId, ['status' => 'withdrawn']);
+
+        $this->json(['success' => true, 'message' => 'Proposta retirada com sucesso!']);
     }
 
     public function myContracts(): void

@@ -41,6 +41,46 @@
             </div>
         </div>
         
+        <!-- Video Player -->
+        <?php
+        $videoMode = $playbook['video_mode'] ?? 'none';
+        $videoUrl = $playbook['video_url'] ?? '';
+        if ($videoUrl):
+            $isYoutube = preg_match('/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]+)/', $videoUrl, $ytMatch);
+            $isVimeo = preg_match('/vimeo\.com\/(\d+)/', $videoUrl, $vimeoMatch);
+            $isLocalUpload = strpos($videoUrl, 'uploads/playbooks/videos/') === 0;
+        ?>
+        <div class="bg-white rounded-xl shadow-sm p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                <i data-lucide="video" class="w-5 h-5"></i>
+                Vídeo do Treinamento
+            </h2>
+            <div class="aspect-video bg-gray-900 rounded-lg overflow-hidden">
+                <?php if ($isYoutube): ?>
+                    <iframe src="https://www.youtube.com/embed/<?= htmlspecialchars($ytMatch[1]) ?>?rel=0" 
+                            class="w-full h-full" frameborder="0" 
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                            allowfullscreen></iframe>
+                <?php elseif ($isVimeo): ?>
+                    <iframe src="https://player.vimeo.com/video/<?= htmlspecialchars($vimeoMatch[1]) ?>" 
+                            class="w-full h-full" frameborder="0" 
+                            allow="autoplay; fullscreen; picture-in-picture" 
+                            allowfullscreen></iframe>
+                <?php elseif ($isLocalUpload): ?>
+                    <video controls class="w-full h-full">
+                        <source src="<?= $this->url($videoUrl) ?>" type="video/<?= pathinfo($videoUrl, PATHINFO_EXTENSION) ?>">
+                        Seu navegador não suporta reprodução de vídeo.
+                    </video>
+                <?php else: ?>
+                    <video controls class="w-full h-full">
+                        <source src="<?= htmlspecialchars($videoUrl) ?>">
+                        Seu navegador não suporta reprodução de vídeo.
+                    </video>
+                <?php endif; ?>
+            </div>
+        </div>
+        <?php endif; ?>
+
         <!-- Content -->
         <div class="bg-white rounded-xl shadow-sm p-6">
             <h2 class="text-lg font-semibold text-gray-800 mb-4">Conteúdo do Treinamento</h2>
@@ -120,10 +160,92 @@
             </div>
             <?php endif; ?>
         </div>
+
+        <!-- Configuração de Vídeo -->
+        <div class="bg-white rounded-xl shadow-sm p-6">
+            <h3 class="font-semibold text-gray-800 mb-4">Vídeo do Playbook</h3>
+            <?php
+            $videoMode = $playbook['video_mode'] ?? 'none';
+            $videoUrl = $playbook['video_url'] ?? '';
+            $videoOriginal = $playbook['video_original_name'] ?? '';
+            ?>
+            
+            <?php if ($videoUrl): ?>
+            <div class="mb-4 p-3 bg-gray-50 rounded-lg">
+                <p class="text-sm text-gray-600 mb-2">
+                    <i data-lucide="video" class="w-4 h-4 inline-block mr-1"></i>
+                    Vídeo configurado (<?= $videoMode === 'upload' ? 'Upload' : ($videoMode === 'ai' ? 'IA' : 'Link') ?>)
+                </p>
+                <?php if ($videoOriginal): ?>
+                <p class="text-xs text-gray-500"><?= htmlspecialchars($videoOriginal) ?></p>
+                <?php else: ?>
+                <p class="text-xs text-gray-500 truncate"><?= htmlspecialchars($videoUrl) ?></p>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+
+            <form action="<?= $this->url("playbooks/{$playbook['id']}/video") ?>" method="POST" enctype="multipart/form-data" id="videoForm">
+                <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
+                
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Modo de Vídeo</label>
+                    <select name="video_mode" id="videoModeSelect" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm">
+                        <option value="none" <?= $videoMode === 'none' ? 'selected' : '' ?>>Sem vídeo</option>
+                        <option value="url" <?= $videoMode === 'url' ? 'selected' : '' ?>>Link (YouTube/Vimeo/etc)</option>
+                        <option value="upload" <?= $videoMode === 'upload' ? 'selected' : '' ?>>Upload de arquivo</option>
+                        <option value="ai" <?= $videoMode === 'ai' ? 'selected' : '' ?>>Sugestão por IA</option>
+                    </select>
+                </div>
+
+                <div id="videoUrlField" class="mb-4 hidden">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">URL do Vídeo</label>
+                    <input type="url" name="video_url" value="<?= htmlspecialchars($videoUrl) ?>" placeholder="https://www.youtube.com/watch?v=..." class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm">
+                </div>
+
+                <div id="videoUploadField" class="mb-4 hidden">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Arquivo de Vídeo</label>
+                    <input type="file" name="video_file" accept=".mp4,.webm,.ogg,.mov,.m4v" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                    <p class="text-xs text-gray-500 mt-1">Formatos: MP4, WEBM, OGG, MOV, M4V</p>
+                </div>
+
+                <div id="videoAiField" class="mb-4 hidden">
+                    <p class="text-sm text-gray-600">A IA irá sugerir um vídeo educacional do YouTube relacionado ao conteúdo deste playbook.</p>
+                </div>
+
+                <div class="mb-4 flex items-start gap-2">
+                    <input type="checkbox" id="acceptTermsVideo" name="accept_terms" value="1" class="mt-1 text-blue-600 focus:ring-blue-500" required>
+                    <label for="acceptTermsVideo" class="text-sm text-gray-700 leading-5">
+                        Confirmo que li e aceito os termos de uso para vídeos de playbooks (versão 1.0).
+                    </label>
+                </div>
+
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition">
+                    Salvar Configuração de Vídeo
+                </button>
+            </form>
+        </div>
     </div>
 </div>
 
 <script>
+// Video mode toggle
+document.addEventListener('DOMContentLoaded', function() {
+    const modeSelect = document.getElementById('videoModeSelect');
+    const urlField = document.getElementById('videoUrlField');
+    const uploadField = document.getElementById('videoUploadField');
+    const aiField = document.getElementById('videoAiField');
+
+    function toggleVideoFields() {
+        const mode = modeSelect.value;
+        urlField.classList.toggle('hidden', mode !== 'url');
+        uploadField.classList.toggle('hidden', mode !== 'upload');
+        aiField.classList.toggle('hidden', mode !== 'ai');
+    }
+
+    modeSelect.addEventListener('change', toggleVideoFields);
+    toggleVideoFields();
+});
+
 async function publishPlaybook() {
     if (!confirm('Deseja publicar este playbook?')) return;
     

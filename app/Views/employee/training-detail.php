@@ -43,6 +43,45 @@
 </div>
 <?php endif; ?>
 
+<!-- Video Player -->
+<?php
+$videoUrl = $playbook['video_url'] ?? '';
+if ($videoUrl):
+    $isYoutube = preg_match('/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]+)/', $videoUrl, $ytMatch);
+    $isVimeo = preg_match('/vimeo\.com\/(\d+)/', $videoUrl, $vimeoMatch);
+    $isLocalUpload = strpos($videoUrl, 'uploads/playbooks/videos/') === 0;
+?>
+<div class="bg-white rounded-xl shadow-sm p-8 mb-8">
+    <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+        <i data-lucide="video" class="w-5 h-5 text-emerald-600"></i>
+        Vídeo do Treinamento
+    </h2>
+    <div class="aspect-video bg-gray-900 rounded-lg overflow-hidden">
+        <?php if ($isYoutube): ?>
+            <iframe src="https://www.youtube.com/embed/<?= htmlspecialchars($ytMatch[1]) ?>?rel=0" 
+                    class="w-full h-full" frameborder="0" 
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                    allowfullscreen></iframe>
+        <?php elseif ($isVimeo): ?>
+            <iframe src="https://player.vimeo.com/video/<?= htmlspecialchars($vimeoMatch[1]) ?>" 
+                    class="w-full h-full" frameborder="0" 
+                    allow="autoplay; fullscreen; picture-in-picture" 
+                    allowfullscreen></iframe>
+        <?php elseif ($isLocalUpload): ?>
+            <video controls class="w-full h-full">
+                <source src="<?= $this->url($videoUrl) ?>" type="video/<?= pathinfo($videoUrl, PATHINFO_EXTENSION) ?>">
+                Seu navegador não suporta reprodução de vídeo.
+            </video>
+        <?php else: ?>
+            <video controls class="w-full h-full">
+                <source src="<?= htmlspecialchars($videoUrl) ?>">
+                Seu navegador não suporta reprodução de vídeo.
+            </video>
+        <?php endif; ?>
+    </div>
+</div>
+<?php endif; ?>
+
 <!-- Content -->
 <div class="bg-white rounded-xl shadow-sm p-8 mb-8">
     <h2 class="text-lg font-semibold text-gray-800 mb-4">Conteúdo do Treinamento</h2>

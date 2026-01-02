@@ -21,7 +21,10 @@ class Playbook extends Model
         'rules_policies',
         'status',
         'is_paid',
-        'payment_id'
+        'payment_id',
+        'video_mode',
+        'video_url',
+        'video_original_name'
     ];
 
     /**
